@@ -1,0 +1,978 @@
+"""Main application window for DXF Viewer."""
+
+import os
+import tempfile
+from pathlib import Path
+import ezdxf
+from ezdxf.layouts import Modelspace
+from PyQt5.QtWidgets import (
+    QMainWindow, QTabWidget, QFileDialog, QMessageBox,
+    QStatusBar, QToolBar, QAction, QDialog
+)
+from PyQt5.QtCore import Qt, QPointF
+from PyQt5.QtGui import QKeySequence, QFont
+
+from core.tab_manager import DXFTab
+from core.color_manager import ColorManager
+from core.search_manager import SearchManager
+from ui.dialogs import (
+    BackgroundColorDialog, ColorChangeDialog, TextSearchDialog,
+    FileInfoDialog, ExportImageDialog
+)
+
+# ezdxf monkey patch for CADViewer compatibility
+original_init = Modelspace.__init__
+
+def patched_init(self, *args, **kwargs):
+    original_init(self, *args, **kwargs)
+    if not hasattr(self, 'errors'):
+        self.errors = []
+
+Modelspace.__init__ = patched_init
+
+class DXFViewerApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("DXF Viewer")
+        self.setGeometry(100, 100, 1200, 800)
+
+        self.setAcceptDrops(True)  # ウィンドウ全体で Drag&Drop 有効化
+        
+        # UI要素を初期化
+        self.create_menu_bar()
+        self.create_toolbar()
+        self.create_status_bar()
+
+        # メインエリア - タブウィジェット
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setTabsClosable(True)
+        self.tab_widget.tabCloseRequested.connect(self.close_tab)
+        self.tab_widget.currentChanged.connect(self.on_tab_changed)
+        self.setCentralWidget(self.tab_widget)
+        
+        # 初期状態でUIを無効化
+        self.update_ui_state(file_loaded=False)
+    
+    def get_current_tab(self):
+        """現在のアクティブなタブを取得"""
+        current_index = self.tab_widget.currentIndex()
+        if current_index >= 0:
+            return self.tab_widget.widget(current_index)
+        return None
+    
+    def create_new_tab(self, file_path=None):
+        """新しいタブを作成"""
+        tab = DXFTab(file_path)
+        
+        # タブのタイトルを設定
+        if file_path:
+            tab_title = os.path.basename(file_path)
+        else:
+            tab_title = "New Tab"
+        
+        # タブを追加してアクティブにする
+        tab_index = self.tab_widget.addTab(tab.cad_viewer, tab_title)
+        self.tab_widget.setCurrentIndex(tab_index)
+        
+        # タブにデータを保存
+        tab.cad_viewer.tab_data = tab
+        
+        return tab
+    
+    def close_tab(self, index):
+        """タブを閉じる"""
+        if self.tab_widget.count() <= 1:
+            # 最後のタブの場合はアプリケーションを終了
+            self.close()
+            return
+        
+        widget = self.tab_widget.widget(index)
+        self.tab_widget.removeTab(index)
+        if widget:
+            widget.deleteLater()
+    
+    def on_tab_changed(self, index):
+        """タブが変更されたときの処理"""
+        self.update_ui_for_active_tab()
+        
+        # Update search-related UI based on current tab
+        current_tab = self.get_current_tab()
+        if current_tab and hasattr(current_tab, 'tab_data'):
+            tab_data = current_tab.tab_data
+            has_results = len(tab_data.search_results) > 0 and tab_data.search_active
+            self.clear_search_action.setEnabled(has_results)
+            self.toolbar_clear_search_action.setEnabled(has_results)
+            self.find_next_action.setEnabled(len(tab_data.search_results) > 1)
+            self.find_prev_action.setEnabled(len(tab_data.search_results) > 1)
+            
+            # Update color change UI
+            self.restore_colors_action.setEnabled(tab_data.color_change_active)
+            self.toolbar_restore_colors_action.setEnabled(tab_data.color_change_active)
+    
+    def update_ui_for_active_tab(self):
+        """アクティブタブに合わせてUIを更新"""
+        current_tab = self.get_current_tab()
+        
+        if current_tab and hasattr(current_tab, 'tab_data'):
+            tab_data = current_tab.tab_data
+            file_loaded = tab_data.file_path is not None
+            
+            # UI状態を更新
+            self.update_ui_state(file_loaded=file_loaded)
+            
+            # ウィンドウタイトルとステータスバーを更新
+            if file_loaded:
+                filename = os.path.basename(tab_data.file_path)
+                self.setWindowTitle(f"DXF Viewer - {filename}")
+                self.status_bar.showMessage(f"Loaded: {filename}")
+            else:
+                self.setWindowTitle("DXF Viewer")
+                self.status_bar.showMessage("Ready")
+        else:
+            self.update_ui_state(file_loaded=False)
+            self.setWindowTitle("DXF Viewer")
+            self.status_bar.showMessage("Ready")
+    
+    def create_menu_bar(self):
+        """メニューバーを作成"""
+        menubar = self.menuBar()
+        
+        # メニューバーのフォントサイズを大きくする
+        from PyQt5.QtGui import QFont
+        menu_font = QFont()
+        menu_font.setPointSize(14)  # フォントサイズを14ptに設定
+        menubar.setFont(menu_font)
+        
+        # Fileメニュー
+        file_menu = menubar.addMenu('File')
+        
+        # Open DXF File
+        open_action = QAction('Open DXF File...', self)
+        open_action.setShortcut(QKeySequence.Open)
+        open_action.setFont(menu_font)  # メニューアイテムにもフォントを適用
+        open_action.triggered.connect(self.open_file_dialog)
+        file_menu.addAction(open_action)
+        
+        file_menu.addSeparator()
+        
+        # Exit
+        exit_action = QAction('Exit', self)
+        exit_action.setShortcut(QKeySequence.Quit)
+        exit_action.setFont(menu_font)  # メニューアイテムにもフォントを適用
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+        
+        # Toolsメニュー
+        tools_menu = menubar.addMenu('Tools')
+
+        # File Info
+        self.info_action = QAction('File Information...', self)
+        self.info_action.setFont(menu_font)
+        self.info_action.triggered.connect(self.show_file_info)
+        self.info_action.setEnabled(False)
+        tools_menu.addAction(self.info_action)
+
+        tools_menu.addSeparator()
+
+        # Export to Image
+        self.export_action = QAction('Export to Image...', self)
+        self.export_action.setFont(menu_font)
+        self.export_action.triggered.connect(self.export_to_image)
+        self.export_action.setEnabled(False)
+        tools_menu.addAction(self.export_action)
+
+        tools_menu.addSeparator()
+
+        # Change All Colors
+        self.change_colors_action = QAction('Change All Entity Colors...', self)
+        self.change_colors_action.setFont(menu_font)
+        self.change_colors_action.triggered.connect(self.change_all_colors)
+        self.change_colors_action.setEnabled(False)
+        tools_menu.addAction(self.change_colors_action)
+
+        # Restore Original Colors
+        self.restore_colors_action = QAction('Restore Original Colors', self)
+        self.restore_colors_action.setFont(menu_font)
+        self.restore_colors_action.triggered.connect(self.restore_all_colors)
+        self.restore_colors_action.setEnabled(False)
+        tools_menu.addAction(self.restore_colors_action)
+
+        tools_menu.addSeparator()
+
+        # Change Background Color
+        self.background_color_action = QAction('Change Background Color...', self)
+        self.background_color_action.setFont(menu_font)
+        self.background_color_action.triggered.connect(self.change_background_color)
+        self.background_color_action.setEnabled(False)
+        tools_menu.addAction(self.background_color_action)
+
+        # Searchメニュー
+        search_menu = menubar.addMenu('Search')
+
+        # Search Text
+        self.search_action = QAction('Search Text...', self)
+        self.search_action.setShortcut(QKeySequence.Find)
+        self.search_action.setFont(menu_font)
+        self.search_action.triggered.connect(self.search_text)
+        self.search_action.setEnabled(False)
+        search_menu.addAction(self.search_action)
+
+        # Clear Search
+        self.clear_search_action = QAction('Clear Search', self)
+        self.clear_search_action.setShortcut(QKeySequence('Ctrl+Shift+F'))
+        self.clear_search_action.setFont(menu_font)
+        self.clear_search_action.triggered.connect(self.clear_search)
+        self.clear_search_action.setEnabled(False)
+        search_menu.addAction(self.clear_search_action)
+
+        search_menu.addSeparator()
+
+        # Find Next
+        self.find_next_action = QAction('Find Next', self)
+        self.find_next_action.setShortcut(QKeySequence.FindNext)
+        self.find_next_action.setFont(menu_font)
+        self.find_next_action.triggered.connect(self.find_next)
+        self.find_next_action.setEnabled(False)
+        search_menu.addAction(self.find_next_action)
+
+        # Find Previous
+        self.find_prev_action = QAction('Find Previous', self)
+        self.find_prev_action.setShortcut(QKeySequence.FindPrevious)
+        self.find_prev_action.setFont(menu_font)
+        self.find_prev_action.triggered.connect(self.find_previous)
+        self.find_prev_action.setEnabled(False)
+        search_menu.addAction(self.find_prev_action)
+    
+    def create_toolbar(self):
+        """ツールバーを作成"""
+        toolbar = QToolBar()
+        
+        # ツールバーのフォントサイズを大きくする
+        from PyQt5.QtGui import QFont
+        toolbar_font = QFont()
+        toolbar_font.setPointSize(14)  # フォントサイズを14ptに設定
+        toolbar.setFont(toolbar_font)
+        
+        self.addToolBar(toolbar)
+        
+        # Open File
+        open_action = QAction('Open', self)
+        open_action.setFont(toolbar_font)  # ツールバーアイテムにもフォントを適用
+        open_action.triggered.connect(self.open_file_dialog)
+        toolbar.addAction(open_action)
+        
+        toolbar.addSeparator()
+        
+        # File Info
+        self.toolbar_info_action = QAction('Info', self)
+        self.toolbar_info_action.setFont(toolbar_font)  # ツールバーアイテムにもフォントを適用
+        self.toolbar_info_action.triggered.connect(self.show_file_info)
+        self.toolbar_info_action.setEnabled(False)
+        toolbar.addAction(self.toolbar_info_action)
+        
+        # Export
+        self.toolbar_export_action = QAction('Export', self)
+        self.toolbar_export_action.setFont(toolbar_font)  # ツールバーアイテムにもフォントを適用
+        self.toolbar_export_action.triggered.connect(self.export_to_image)
+        self.toolbar_export_action.setEnabled(False)
+        toolbar.addAction(self.toolbar_export_action)
+        
+        toolbar.addSeparator()
+        
+        # Search
+        self.toolbar_search_action = QAction('Search', self)
+        self.toolbar_search_action.setFont(toolbar_font)
+        self.toolbar_search_action.triggered.connect(self.search_text)
+        self.toolbar_search_action.setEnabled(False)
+        toolbar.addAction(self.toolbar_search_action)
+        
+        # Clear Search
+        self.toolbar_clear_search_action = QAction('Clear Search', self)
+        self.toolbar_clear_search_action.setFont(toolbar_font)
+        self.toolbar_clear_search_action.triggered.connect(self.clear_search)
+        self.toolbar_clear_search_action.setEnabled(False)
+        toolbar.addAction(self.toolbar_clear_search_action)
+        
+        toolbar.addSeparator()
+        
+        # Change Colors
+        self.toolbar_change_colors_action = QAction('Change Colors', self)
+        self.toolbar_change_colors_action.setFont(toolbar_font)
+        self.toolbar_change_colors_action.triggered.connect(self.change_all_colors)
+        self.toolbar_change_colors_action.setEnabled(False)
+        toolbar.addAction(self.toolbar_change_colors_action)
+        
+        # Restore Colors
+        self.toolbar_restore_colors_action = QAction('Restore Colors', self)
+        self.toolbar_restore_colors_action.setFont(toolbar_font)
+        self.toolbar_restore_colors_action.triggered.connect(self.restore_all_colors)
+        self.toolbar_restore_colors_action.setEnabled(False)
+        toolbar.addAction(self.toolbar_restore_colors_action)
+
+        toolbar.addSeparator()
+
+        # Background Color
+        self.toolbar_background_color_action = QAction('Background', self)
+        self.toolbar_background_color_action.setFont(toolbar_font)
+        self.toolbar_background_color_action.triggered.connect(self.change_background_color)
+        self.toolbar_background_color_action.setEnabled(False)
+        toolbar.addAction(self.toolbar_background_color_action)
+    
+    def create_status_bar(self):
+        """ステータスバーを作成"""
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+        self.status_bar.showMessage("Ready")
+    
+    def open_file_dialog(self):
+        """ファイル選択ダイアログを開く"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Open DXF File", "", "DXF Files (*.dxf);;All Files (*)"
+        )
+        if file_path:
+            self.load_dxf(file_path)
+    
+    def show_file_info(self):
+        """ファイル情報ダイアログを表示"""
+        current_tab = self.get_current_tab()
+        if not current_tab or not hasattr(current_tab, 'tab_data') or not current_tab.tab_data.file_path:
+            QMessageBox.warning(self, "No File", "No DXF file is currently loaded.")
+            return
+        
+        dialog = FileInfoDialog(self)
+        dialog.show_file_info(current_tab.tab_data.file_path)
+        dialog.exec_()
+    
+    def export_to_image(self):
+        """画像エクスポートダイアログを表示"""
+        current_tab = self.get_current_tab()
+        if not current_tab or not hasattr(current_tab, 'tab_data') or not current_tab.tab_data.file_path:
+            QMessageBox.warning(self, "No File", "No DXF file is currently loaded.")
+            return
+
+        tab_data = current_tab.tab_data
+
+        # 出力ファイル選択
+        output_path, _ = QFileDialog.getSaveFileName(
+            self, "Export to Image",
+            Path(tab_data.file_path).stem + ".png",
+            "PNG Files (*.png);;SVG Files (*.svg);;PDF Files (*.pdf);;All Files (*)"
+        )
+
+        if output_path:
+            # Get current layer visibility from viewer and save to a temporary DXF file
+            temp_dxf_path = None
+            try:
+                # Get layer visibility from CADViewer
+                layer_states = self.get_layer_visibility(tab_data)
+
+                if layer_states is not None:
+                    # Save to temporary file with current layer visibility
+                    temp_dxf_path = self.save_with_layer_visibility(tab_data, layer_states)
+                    export_path = temp_dxf_path if temp_dxf_path else tab_data.file_path
+                else:
+                    export_path = tab_data.file_path
+
+                # Export with current background color
+                dialog = ExportImageDialog(self)
+                dialog.export_to_image(export_path, output_path, tab_data.background_color)
+                dialog.exec_()
+            finally:
+                # Clean up temporary file
+                if temp_dxf_path and os.path.exists(temp_dxf_path):
+                    try:
+                        os.remove(temp_dxf_path)
+                    except:
+                        pass
+    
+    def get_layer_visibility(self, tab_data):
+        """Get layer visibility state from CADViewer"""
+        try:
+            # Access the CADViewer's layer checkboxes to get visibility state
+            if hasattr(tab_data.cad_viewer, '_layer_checkboxes'):
+                layer_states = {}
+                # _layer_checkboxes is a generator that yields (index, checkbox) tuples
+                for index, checkbox in tab_data.cad_viewer._layer_checkboxes():
+                    layer_name = checkbox.text()
+                    is_checked = checkbox.checkState() == Qt.Checked
+                    layer_states[layer_name] = is_checked
+                return layer_states if layer_states else None
+            return None
+        except Exception as e:
+            print(f"Error getting layer visibility: {e}")
+            return None
+
+    def save_with_layer_visibility(self, tab_data, layer_states):
+        """Save DXF to temporary file with current layer visibility"""
+        try:
+            if not tab_data.dxf_doc:
+                return None
+
+            # Create a temporary file
+            temp_fd, temp_path = tempfile.mkstemp(suffix='.dxf')
+            os.close(temp_fd)
+
+            # Store original layer states to restore them later
+            original_states = {}
+            for layer_name, is_visible in layer_states.items():
+                if layer_name in tab_data.dxf_doc.layers:
+                    layer = tab_data.dxf_doc.layers.get(layer_name)
+                    # Store original state
+                    original_states[layer_name] = layer.is_on()
+                    # Set layer off/on based on visibility
+                    if is_visible:
+                        layer.on()
+                    else:
+                        layer.off()
+
+            # Save to temporary file
+            tab_data.dxf_doc.saveas(temp_path)
+
+            # Restore original layer states
+            for layer_name, was_on in original_states.items():
+                if layer_name in tab_data.dxf_doc.layers:
+                    layer = tab_data.dxf_doc.layers.get(layer_name)
+                    if was_on:
+                        layer.on()
+                    else:
+                        layer.off()
+
+            return temp_path
+
+        except Exception as e:
+            print(f"Error saving with layer visibility: {e}")
+            return None
+
+    def update_ui_state(self, file_loaded=False):
+        """UIの状態を更新"""
+        self.export_action.setEnabled(file_loaded)
+        self.info_action.setEnabled(file_loaded)
+        self.toolbar_export_action.setEnabled(file_loaded)
+        self.toolbar_info_action.setEnabled(file_loaded)
+        self.search_action.setEnabled(file_loaded)
+        self.toolbar_search_action.setEnabled(file_loaded)
+        self.change_colors_action.setEnabled(file_loaded)
+        self.toolbar_change_colors_action.setEnabled(file_loaded)
+        self.background_color_action.setEnabled(file_loaded)
+        self.toolbar_background_color_action.setEnabled(file_loaded)
+    
+    def change_background_color(self):
+        """Change the background color of the viewer"""
+        current_tab = self.get_current_tab()
+        if not current_tab or not hasattr(current_tab, 'tab_data'):
+            return
+
+        tab_data = current_tab.tab_data
+
+        # Show background color dialog
+        dialog = BackgroundColorDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            color, color_name = dialog.get_selected_color()
+
+            # Apply background color to the CAD viewer
+            if hasattr(tab_data.cad_viewer, 'set_background_color'):
+                tab_data.cad_viewer.set_background_color(color)
+
+                # Store background color as hex string for export
+                tab_data.background_color = color.name()  # Converts QColor to #RRGGBB
+
+                self.status_bar.showMessage(f"Background color changed to {color_name}")
+
+    def change_all_colors(self):
+        """Change all entity colors to a specified color"""
+        current_tab = self.get_current_tab()
+        if not current_tab or not hasattr(current_tab, 'tab_data'):
+            return
+        
+        tab_data = current_tab.tab_data
+        if not tab_data.dxf_doc:
+            QMessageBox.warning(self, "No File", "No DXF file is currently loaded.")
+            return
+        
+        # Clear any active search first
+        if tab_data.search_active:
+            self.clear_search()
+        
+        # Show color dialog
+        dialog = ColorChangeDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            color_index, color_name, rgb_value = dialog.get_selected_color()
+            preserve_text = dialog.should_preserve_text()
+
+            # Store original colors if not already stored
+            if not tab_data.color_change_active:
+                self.store_colors_for_change(tab_data)
+
+            # Apply color to all entities
+            self.apply_color_to_all_entities(tab_data, color_index, rgb_value, preserve_text)
+
+            # Update UI
+            tab_data.color_change_active = True
+            self.restore_colors_action.setEnabled(True)
+            self.toolbar_restore_colors_action.setEnabled(True)
+
+            # Update status bar
+            if preserve_text:
+                self.status_bar.showMessage(f"Changed all entities to {color_name} (text preserved)")
+            else:
+                self.status_bar.showMessage(f"Changed all entities to {color_name}")
+    
+    def restore_all_colors(self):
+        """Restore original colors after color change"""
+        current_tab = self.get_current_tab()
+        if not current_tab or not hasattr(current_tab, 'tab_data'):
+            return
+        
+        tab_data = current_tab.tab_data
+        if tab_data.color_change_active and tab_data.color_change_backup:
+            # Restore colors from backup
+            self.restore_colors_from_backup(tab_data)
+            
+            # Clear backup
+            tab_data.color_change_backup.clear()
+            tab_data.color_change_active = False
+            
+            # Refresh viewer
+            self.refresh_viewer(tab_data)
+            
+            # Update UI
+            self.restore_colors_action.setEnabled(False)
+            self.toolbar_restore_colors_action.setEnabled(False)
+            self.status_bar.showMessage("Original colors restored")
+    
+    def store_colors_for_change(self, tab_data):
+        """Store original colors before changing all entity colors"""
+        ColorManager.store_entity_colors(tab_data)
+    
+    def apply_color_to_all_entities(self, tab_data, color_index, rgb_value, preserve_text=False):
+        """Apply specified color to all entities"""
+        ColorManager.apply_color_to_all_entities(tab_data, color_index, rgb_value, preserve_text)
+        self.refresh_viewer(tab_data)
+    
+    def restore_colors_from_backup(self, tab_data):
+        """Restore colors from the color change backup"""
+        ColorManager.restore_colors_from_backup(tab_data)
+    
+    def search_text(self):
+        """Open search dialog and perform text search"""
+        current_tab = self.get_current_tab()
+        if not current_tab or not hasattr(current_tab, 'tab_data'):
+            return
+        
+        tab_data = current_tab.tab_data
+        if not tab_data.dxf_doc:
+            QMessageBox.warning(self, "No File", "No DXF file is currently loaded.")
+            return
+        
+        # Show search dialog
+        dialog = TextSearchDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            params = dialog.get_search_params()
+            search_text = params['text']
+            
+            if not search_text:
+                return
+            
+            # Clear previous search
+            self.clear_search()
+            
+            # Store original colors for ALL entities before search
+            SearchManager.store_all_entity_colors(tab_data)
+
+            # Store the selected dim color
+            tab_data.search_dim_color = params['dim_color']
+
+            # Perform search
+            tab_data.search_results = SearchManager.find_text_entities(
+                tab_data.dxf_doc,
+                search_text,
+                params['case_sensitive'],
+                params['whole_word']
+            )
+            
+            if tab_data.search_results:
+                # Apply color changes to highlight results
+                SearchManager.apply_search_highlighting(tab_data)
+                self.refresh_viewer(tab_data)
+                
+                # Enable navigation actions
+                tab_data.search_active = True
+                self.clear_search_action.setEnabled(True)
+                self.toolbar_clear_search_action.setEnabled(True)
+                self.find_next_action.setEnabled(len(tab_data.search_results) > 1)
+                self.find_prev_action.setEnabled(len(tab_data.search_results) > 1)
+                
+                # Navigate to first result
+                tab_data.current_search_index = 0
+                self.navigate_to_result(tab_data, 0)
+                
+                # Update status bar
+                self.status_bar.showMessage(
+                    f"Found {len(tab_data.search_results)} occurrence(s) of '{search_text}'"
+                )
+            else:
+                QMessageBox.information(
+                    self,
+                    "Search Result",
+                    f"No occurrences of '{search_text}' found."
+                )
+                self.status_bar.showMessage("No matches found")
+    
+    def clear_search(self):
+        """Clear all search highlights and restore original colors"""
+        current_tab = self.get_current_tab()
+        if current_tab and hasattr(current_tab, 'tab_data'):
+            tab_data = current_tab.tab_data
+            
+            if tab_data.search_active:
+                # Restore original colors
+                SearchManager.restore_original_colors(tab_data)
+                
+                # Clear search results
+                tab_data.search_results.clear()
+                tab_data.current_search_index = -1
+                tab_data.search_active = False
+                
+                # Refresh the viewer
+                self.refresh_viewer(tab_data)
+                
+                # Disable navigation actions
+                self.clear_search_action.setEnabled(False)
+                self.toolbar_clear_search_action.setEnabled(False)
+                self.find_next_action.setEnabled(False)
+                self.find_prev_action.setEnabled(False)
+                
+                self.status_bar.showMessage("Search cleared")
+    
+    def find_next(self):
+        """Navigate to next search result"""
+        current_tab = self.get_current_tab()
+        if not current_tab or not hasattr(current_tab, 'tab_data'):
+            return
+        
+        tab_data = current_tab.tab_data
+        if tab_data.search_results:
+            tab_data.current_search_index = (tab_data.current_search_index + 1) % len(tab_data.search_results)
+            self.navigate_to_result(tab_data, tab_data.current_search_index)
+    
+    def find_previous(self):
+        """Navigate to previous search result"""
+        current_tab = self.get_current_tab()
+        if not current_tab or not hasattr(current_tab, 'tab_data'):
+            return
+        
+        tab_data = current_tab.tab_data
+        if tab_data.search_results:
+            tab_data.current_search_index = (tab_data.current_search_index - 1) % len(tab_data.search_results)
+            self.navigate_to_result(tab_data, tab_data.current_search_index)
+    
+    def find_text_entities(self, doc, search_text, case_sensitive=False, whole_word=False):
+        """Find all text entities matching search criteria"""
+        import re
+        
+        results = []
+        
+        # Prepare search pattern
+        if not case_sensitive:
+            search_text = search_text.lower()
+        
+        if whole_word:
+            pattern = r'\b' + re.escape(search_text) + r'\b'
+            regex = re.compile(pattern, re.IGNORECASE if not case_sensitive else 0)
+        
+        # Search in modelspace
+        msp = doc.modelspace()
+        for entity in msp:
+            if entity.dxftype() in ['TEXT', 'MTEXT']:
+                entity_text = entity.dxf.text if hasattr(entity.dxf, 'text') else ''
+                
+                # Handle MTEXT formatting codes
+                if entity.dxftype() == 'MTEXT':
+                    # Remove common MTEXT formatting codes
+                    import re
+                    entity_text = re.sub(r'\\[HPLpfFcC][^;]*;', '', entity_text)
+                    entity_text = re.sub(r'[{}]', '', entity_text)
+                
+                compare_text = entity_text if case_sensitive else entity_text.lower()
+                
+                # Check for match
+                match = False
+                if whole_word:
+                    match = regex.search(compare_text) is not None
+                else:
+                    match = search_text in compare_text
+                
+                if match:
+                    # Get entity properties
+                    position = None
+                    rotation = 0
+                    height = 1.0
+                    original_color = entity.dxf.color if hasattr(entity.dxf, 'color') else 256  # 256 = BYLAYER
+                    
+                    if entity.dxftype() == 'TEXT':
+                        position = entity.dxf.insert
+                        rotation = entity.dxf.rotation if hasattr(entity.dxf, 'rotation') else 0
+                        height = entity.dxf.height if hasattr(entity.dxf, 'height') else 1.0
+                    elif entity.dxftype() == 'MTEXT':
+                        position = entity.dxf.insert
+                        rotation = entity.dxf.rotation if hasattr(entity.dxf, 'rotation') else 0
+                        height = entity.dxf.char_height if hasattr(entity.dxf, 'char_height') else 1.0
+                    
+                    if position:
+                        # Estimate text width (simple approximation)
+                        width = len(entity_text) * height * 0.6
+                        
+                        result = SearchResult(
+                            entity=entity,
+                            text=entity_text,
+                            position=position,
+                            rotation=rotation,
+                            height=height,
+                            width=width,
+                            original_color=original_color
+                        )
+                        results.append(result)
+        
+        # Also search in blocks
+        for block in doc.blocks:
+            if block.name.startswith('*'):
+                continue
+                
+            for entity in block:
+                if entity.dxftype() in ['TEXT', 'MTEXT']:
+                    entity_text = entity.dxf.text if hasattr(entity.dxf, 'text') else ''
+                    
+                    if entity.dxftype() == 'MTEXT':
+                        entity_text = re.sub(r'\\[HPLpfFcC][^;]*;', '', entity_text)
+                        entity_text = re.sub(r'[{}]', '', entity_text)
+                    
+                    compare_text = entity_text if case_sensitive else entity_text.lower()
+                    
+                    match = False
+                    if whole_word:
+                        match = regex.search(compare_text) is not None
+                    else:
+                        match = search_text in compare_text
+                    
+                    if match:
+                        # Note: Block entities would need transformation based on INSERT entities
+                        # For simplicity, we're recording them but highlighting might need adjustment
+                        position = entity.dxf.insert if hasattr(entity.dxf, 'insert') else (0, 0, 0)
+                        rotation = entity.dxf.rotation if hasattr(entity.dxf, 'rotation') else 0
+                        height = entity.dxf.height if hasattr(entity.dxf, 'height') else 1.0
+                        width = len(entity_text) * height * 0.6
+                        original_color = entity.dxf.color if hasattr(entity.dxf, 'color') else 256
+                        
+                        result = SearchResult(
+                            entity=entity,
+                            text=entity_text,
+                            position=position,
+                            rotation=rotation,
+                            height=height,
+                            width=width,
+                            original_color=original_color
+                        )
+                        results.append(result)
+        
+        return results
+    
+    def store_all_entity_colors(self, tab_data):
+        """Store original colors for all entities in the document"""
+        if not tab_data.dxf_doc:
+            return
+        
+        tab_data.original_entity_colors.clear()
+        
+        # Store colors for all modelspace entities
+        msp = tab_data.dxf_doc.modelspace()
+        for entity in msp:
+            if hasattr(entity.dxf, 'handle'):
+                handle = entity.dxf.handle
+                # Store color if it exists, or None to indicate BYLAYER
+                if hasattr(entity.dxf, 'color'):
+                    tab_data.original_entity_colors[handle] = entity.dxf.color
+                else:
+                    tab_data.original_entity_colors[handle] = None
+        
+        # Store colors for block entities
+        for block in tab_data.dxf_doc.blocks:
+            for entity in block:
+                if hasattr(entity.dxf, 'handle'):
+                    handle = entity.dxf.handle
+                    if hasattr(entity.dxf, 'color'):
+                        tab_data.original_entity_colors[handle] = entity.dxf.color
+                    else:
+                        tab_data.original_entity_colors[handle] = None
+    
+    def apply_search_highlighting(self, tab_data):
+        """Apply color changes to highlight search results"""
+        if not tab_data.dxf_doc or not tab_data.search_results:
+            return
+
+        # Use the user-selected dimmed color (tuple of index and RGB)
+        dimmed_color_index, dimmed_rgb = tab_data.search_dim_color
+        RED_COLOR_INDEX = 1
+        RED_RGB = 0xFF0000
+
+        # Dim all entities first
+        msp = tab_data.dxf_doc.modelspace()
+        for entity in msp:
+            if hasattr(entity.dxf, 'color'):
+                # Check if this entity is in search results
+                is_result = any(r.entity.dxf.handle == entity.dxf.handle for r in tab_data.search_results)
+                if not is_result:
+                    try:
+                        entity.dxf.color = dimmed_color_index
+                        entity.dxf.true_color = dimmed_rgb
+                    except:
+                        pass
+
+        # Also dim entities in blocks
+        for block in tab_data.dxf_doc.blocks:
+            if not block.name.startswith('*'):  # Skip system blocks
+                for entity in block:
+                    if hasattr(entity.dxf, 'color'):
+                        is_result = any(r.entity.dxf.handle == entity.dxf.handle for r in tab_data.search_results)
+                        if not is_result:
+                            try:
+                                entity.dxf.color = dimmed_color_index
+                                entity.dxf.true_color = dimmed_rgb
+                            except:
+                                pass
+
+        # Highlight search results in red
+        for result in tab_data.search_results:
+            if hasattr(result.entity.dxf, 'color'):
+                try:
+                    result.entity.dxf.color = RED_COLOR_INDEX
+                    result.entity.dxf.true_color = RED_RGB
+                except:
+                    pass
+
+        # Refresh the viewer
+        self.refresh_viewer(tab_data)
+    
+    def restore_original_colors(self, tab_data):
+        """Restore original colors for all entities"""
+        if not tab_data.dxf_doc or not tab_data.original_entity_colors:
+            return
+        
+        # Restore colors for modelspace entities
+        msp = tab_data.dxf_doc.modelspace()
+        for entity in msp:
+            if hasattr(entity.dxf, 'handle'):
+                handle = entity.dxf.handle
+                if handle in tab_data.original_entity_colors:
+                    original_color = tab_data.original_entity_colors[handle]
+                    if original_color is not None:
+                        # Entity had a color, restore it
+                        entity.dxf.color = original_color
+                    else:
+                        # Entity didn't have a color attribute (was BYLAYER)
+                        # Remove the color attribute if possible, or set to 256 (BYLAYER)
+                        if hasattr(entity.dxf, 'color'):
+                            try:
+                                entity.dxf.color = 256  # 256 = BYLAYER
+                            except:
+                                pass  # Some entities may not support color changes
+        
+        # Restore colors for block entities
+        for block in tab_data.dxf_doc.blocks:
+            for entity in block:
+                if hasattr(entity.dxf, 'handle'):
+                    handle = entity.dxf.handle
+                    if handle in tab_data.original_entity_colors:
+                        original_color = tab_data.original_entity_colors[handle]
+                        if original_color is not None:
+                            entity.dxf.color = original_color
+                        else:
+                            if hasattr(entity.dxf, 'color'):
+                                try:
+                                    entity.dxf.color = 256  # 256 = BYLAYER
+                                except:
+                                    pass
+        
+        # Clear stored colors
+        tab_data.original_entity_colors.clear()
+    
+    def refresh_viewer(self, tab_data):
+        """Refresh the CAD viewer with updated colors"""
+        if tab_data.cad_viewer and tab_data.dxf_doc and tab_data.msp:
+            try:
+                # Audit the document and re-set to refresh the display
+                auditor = tab_data.dxf_doc.audit()
+                tab_data.cad_viewer.set_document(tab_data.dxf_doc, auditor)
+                if hasattr(tab_data.cad_viewer, 'zoom_extents'):
+                    # Optionally maintain current zoom level instead of zoom_extents
+                    pass  # We could store and restore view state here
+            except Exception as e:
+                print(f"Error refreshing viewer: {e}")
+    
+    def navigate_to_result(self, tab_data, index):
+        """Center view on a specific search result"""
+        if not tab_data.search_results or index < 0 or index >= len(tab_data.search_results):
+            return
+        
+        result = tab_data.search_results[index]
+        graphics_view = tab_data.cad_viewer.graphics_view
+        
+        if graphics_view and result.position:
+            # Center the view on the result
+            x = float(result.position[0])
+            y = float(result.position[1])
+            
+            # Convert to scene coordinates (with inverted Y)
+            scene_point = QPointF(x, -y)
+            
+            # Center the view on this point
+            graphics_view.centerOn(scene_point)
+            
+            # Update status bar
+            self.status_bar.showMessage(
+                f"Result {index + 1} of {len(tab_data.search_results)}: '{result.text[:50]}...'"
+                if len(result.text) > 50 else
+                f"Result {index + 1} of {len(tab_data.search_results)}: '{result.text}'"
+            )
+
+    def load_dxf(self, file_path):
+        # 新しいタブを作成
+        tab = self.create_new_tab(file_path)
+        
+        try:
+            tab.dxf_doc = ezdxf.readfile(file_path)
+            tab.msp = tab.dxf_doc.modelspace()
+        except Exception as e:
+            QMessageBox.critical(self, "DXF Error", f"Failed to load DXF file:\n{e}")
+            # エラーの場合はタブを削除
+            current_index = self.tab_widget.currentIndex()
+            if current_index >= 0:
+                self.close_tab(current_index)
+            return
+
+        try:
+            # Audit the document
+            auditor = tab.dxf_doc.audit()
+            tab.cad_viewer.set_document(tab.dxf_doc, auditor)
+            if hasattr(tab.cad_viewer, 'zoom_extents'):
+                tab.cad_viewer.zoom_extents()
+        except Exception as e:
+            QMessageBox.warning(self, "Viewer Error", f"Error initializing CAD viewer:\n{e}")
+
+        # UI状態を更新
+        self.update_ui_for_active_tab()
+
+    # ウィンドウ全体で Drag&Drop イベント処理
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        urls = event.mimeData().urls()
+        if urls:
+            file_path = urls[0].toLocalFile()
+            if file_path.lower().endswith('.dxf'):
+                self.load_dxf(file_path)
+            else:
+                QMessageBox.warning(self, "Invalid File", "Please drop a DXF file.")
+
+

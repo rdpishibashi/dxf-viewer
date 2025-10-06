@@ -1,0 +1,14 @@
+# DXF Viewer Requirements
+
+# DXF file processing
+ezdxf>=1.4.2
+
+# GUI framework
+PyQt5>=5.15.0
+
+# Image export (required for PNG/PDF/SVG export with background color)
+matplotlib>=3.5.0
+Pillow>=9.0.0
+
+# Note: numpy should already be available as a dependency of ezdxf
+# but listing it explicitly for clarity
