@@ -7,10 +7,13 @@ import ezdxf
 from ezdxf.layouts import Modelspace
 from PyQt5.QtWidgets import (
     QMainWindow, QTabWidget, QFileDialog, QMessageBox,
-    QStatusBar, QToolBar, QAction, QDialog, QApplication
+    QStatusBar, QToolBar, QAction, QDialog, QApplication,
+    QGraphicsPolygonItem
 )
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QKeySequence, QFont, QColor, QPen, QPolygonF
+from PyQt5.QtGui import (
+    QKeySequence, QFont, QColor, QPen, QPolygonF, QPainterPath, QPainterPathStroker
+)
 
 from core.tab_manager import DXFTab
 from core.color_manager import ColorManager
@@ -31,6 +34,30 @@ def patched_init(self, *args, **kwargs):
         self.errors = []
 
 Modelspace.__init__ = patched_init
+
+
+class _OverlayPolygonItem(QGraphicsPolygonItem):
+    """Polygon overlay whose hit area is only its thin outline, not its interior.
+
+    ezdxf's CADGraphicsViewWithOverlay picks the hovered/clicked element via
+    ``scene().items(pos)`` and highlights the topmost one. A normal polygon item
+    reports its filled interior as its shape, so it would be that topmost item
+    across the whole region, stealing hover/clicks from the symbols and wiring
+    underneath. Overriding ``shape()`` to return just the stroked outline keeps
+    the interior click-through while the item still paints its red boundary.
+    (An empty shape would also stop the item from being painted.)
+    """
+
+    _HIT_WIDTH = 3.0  # scene units — thin band along the boundary only
+
+    def shape(self):
+        outline = QPainterPath()
+        outline.addPolygon(self.polygon())
+        outline.closeSubpath()
+        stroker = QPainterPathStroker()
+        stroker.setWidth(self._HIT_WIDTH)
+        return stroker.createStroke(outline)
+
 
 class DXFViewerApp(QMainWindow):
     def __init__(self):
@@ -884,12 +911,13 @@ class DXFViewerApp(QMainWindow):
             # Entities are placed in the scene at their true DXF coordinates;
             # the view applies the vertical flip, so overlays use (x, y) too.
             qpoly = QPolygonF([QPointF(px, py) for (px, py) in region['polygon']])
-            item = scene.addPolygon(qpoly, pen)
+            # _OverlayPolygonItem has an empty shape(), so it is ignored by the
+            # CAD viewer's scene().items(pos) hover/click picking — symbols and
+            # wiring inside the region stay hoverable and selectable.
+            item = _OverlayPolygonItem(qpoly)
+            item.setPen(pen)
             item.setZValue(1e9)  # keep the outline above the drawing
-            # Let mouse clicks pass through to the entities underneath so symbols
-            # and wiring inside the region stay selectable.
-            item.setAcceptedMouseButtons(Qt.NoButton)
-            item.setAcceptHoverEvents(False)
+            scene.addItem(item)
             tab_data.boundary_overlay_items.append(item)
 
     def remove_boundary_overlays(self, tab_data):
