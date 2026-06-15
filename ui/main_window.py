@@ -881,8 +881,9 @@ class DXFViewerApp(QMainWindow):
         pen.setCosmetic(True)  # constant pixel width regardless of zoom
 
         for region in regions:
-            # DXF Y is inverted in the scene (scene_y = -dxf_y).
-            qpoly = QPolygonF([QPointF(px, -py) for (px, py) in region['polygon']])
+            # Entities are placed in the scene at their true DXF coordinates;
+            # the view applies the vertical flip, so overlays use (x, y) too.
+            qpoly = QPolygonF([QPointF(px, py) for (px, py) in region['polygon']])
             item = scene.addPolygon(qpoly, pen)
             item.setZValue(1e9)  # keep the outline above the drawing
             tab_data.boundary_overlay_items.append(item)
@@ -909,7 +910,7 @@ class DXFViewerApp(QMainWindow):
         for region in regions:
             for (px, py) in region['polygon']:
                 xs.append(px)
-                ys.append(-py)  # scene coordinates
+                ys.append(py)  # scene coordinates == true DXF coordinates
         if not xs:
             return
 
@@ -1243,9 +1244,10 @@ class DXFViewerApp(QMainWindow):
             x = float(result.position[0])
             y = float(result.position[1])
             
-            # Convert to scene coordinates (with inverted Y)
-            scene_point = QPointF(x, -y)
-            
+            # Entities sit in the scene at their true DXF coordinates
+            # (the view applies the vertical flip), so center on (x, y).
+            scene_point = QPointF(x, y)
+
             # Center the view on this point
             graphics_view.centerOn(scene_point)
             
