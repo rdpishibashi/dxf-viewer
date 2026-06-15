@@ -24,7 +24,8 @@ DXF-viewer/
 │   ├── color_manager.py    # エンティティ色操作（静的メソッド中心）
 │   ├── search_manager.py   # テキスト検索・ハイライトロジック
 │   ├── region_detector.py  # 矩形領域（直交ポリゴン）検出（DXF-extract-labels より移植）
-│   └── region_search_manager.py  # 領域検索（解析キャッシュ＋名称マッチ）
+│   ├── region_search_manager.py  # 領域検索（解析キャッシュ＋名称マッチ）
+│   └── layer_consolidator.py  # レイヤー統合（Boundaries / Imported 化）
 ├── workers/
 │   └── ezdxf_worker.py     # バックグラウンドスレッド（ezdxf コマンド実行）
 └── utils/
@@ -122,6 +123,25 @@ python dxf_viewer.py drawing1 drawing2.dxf
   `boundary_search_active`・`boundary_keep_highlight`。
 - 回帰テスト: `tests/regression/test_region_search.py`（検出枠数・領域数・名称マッチ件数）。
 
+### レイヤー統合 / Consolidate Layers（`core/layer_consolidator.py`）
+
+入力 DXF に多数存在する `NoLayerName_xxx` などのレイヤーを、英語名の **2 レイヤー**へ
+統合する。`Tools > Consolidate Layers (Boundaries/Imported)`。
+
+- **Boundaries**: 検出された全矩形領域（`analyze_dxf_regions` の `regions`）の境界線。
+  modelspace の LINE で、領域線種（lineweight=25 / color=2）かつ**領域ポリゴンの辺上に
+  乗る**ものを幾何判定（`_line_on_edges`、エッジは最大区間に併合）。
+- **Imported**: それ以外のすべてのエンティティ（block 定義・paperspace 含む）。
+  block 内のエンティティは block 共有のため幾何分類せず一律 Imported。
+- 統合後、未使用になった元レイヤーをレイヤーテーブルから削除（`0`・`Defpoints`・
+  2 つの対象レイヤーは保護）。
+- **非破壊**: メモリ上の doc のみ変更。ファイルは無変更で、**再オープンで元のレイヤーに復元**。
+  ビューアのレイヤーパネルと画像エクスポートに反映される。
+- 解析はキャッシュ（`RegionSearchManager.get_analysis`）を再利用、ビジーカーソル表示。
+- 制限: 領域境界線が block 内にある場合は Boundaries に含まれない（実サンプル EE6868 は
+  全 23 領域の周が modelspace 線で捕捉、EE6888 も周は捕捉済み）。
+- 回帰テスト: `tests/regression/test_layer_consolidation.py`（残存レイヤー・周の被覆・本数）。
+
 ### 色変更（`core/color_manager.py`）
 
 - `ColorManager.set_entity_color()` でエンティティ色を変更
@@ -173,4 +193,4 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-06-15（領域検索 / Boundary Search を追加。検索のテキスト正規化を ezdxf plain_mtext ベースへ移行）*
+*最終更新: 2026-06-15（領域検索 / Boundary Search、レイヤー統合 / Consolidate Layers を追加。検索のテキスト正規化を ezdxf plain_mtext ベースへ移行）*

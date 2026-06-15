@@ -174,6 +174,35 @@ matching boundaries. Complements the text search.
 
 ---
 
+# D. Layer Consolidation Feature
+
+## Overview
+Collapse a drawing's many source layers (ULVAC exports contain dozens of
+`NoLayerName_xxx` layers) into two clearly named English layers:
+- **Boundaries**: the boundary linework of the detected rectangular regions
+- **Imported**: every other entity
+
+## Access
+- Menu → Tools → Consolidate Layers (Boundaries/Imported)
+
+## How It Works
+1. Runs (cached) region detection to find the rectangular regions.
+2. Modelspace lines that use the region line style (lineweight 25, ACI color 2)
+   and lie on a detected region edge are moved to **Boundaries**.
+3. All other entities (including block contents and paperspace) are moved to
+   **Imported**.
+4. The now-unused source layers are removed (the `0` and `Defpoints` layers are
+   kept).
+
+## Important Notes
+1. **Non-destructive**: only the in-memory document is changed; the file on disk
+   is untouched. **Reopen the file to restore the original layers.**
+2. The change is reflected in the viewer's layer panel and in image export.
+3. Boundary lines that live inside block definitions are not reclassified (block
+   content is shared across INSERTs) and remain in **Imported**.
+
+---
+
 # B. DXF Viewer - Color Change Feature
 
 ## Overview
@@ -299,3 +328,7 @@ Tools → Change All Entity Colors... → Select "Gray"
   from DXF-extract-labels (`core/region_detector.py`,
   `core/region_search_manager.py`). Regression test at
   `tests/regression/test_region_search.py`.
+- 2026-06-15: Added Layer Consolidation (Tools → Consolidate Layers) — collapse
+  all source layers into `Boundaries` (detected region edges) and `Imported`
+  (`core/layer_consolidator.py`). Non-destructive; reopen to restore. Regression
+  test at `tests/regression/test_layer_consolidation.py`.
