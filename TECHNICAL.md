@@ -94,6 +94,24 @@ python dxf_viewer.py drawing1 drawing2.dxf
 連動する（重複した状態管理コードは持たない）。メニューバーは併存（キーボード
 ショートカットと項目の探索性のため）。
 
+### ezdxf CADViewer メニューの非表示化
+
+`CADViewer`（ezdxf）は `QMainWindow` サブクラスであり、`__init__` で
+`Select Document` / `Select Layout` / `Toggle Sidebar` / `Toggle Entity Marker` / `Reload`
+の 5 項目をメニューバーに追加する。macOS ではこのメニューがグローバルメニューバーに
+マージされて表示されてしまう。
+
+`PinchZoomCADViewer.__init__` で `super().__init__()` の直後に以下を呼んで非表示にする:
+
+```python
+self.menuBar().setNativeMenuBar(False)  # macOS グローバルメニューバーへの統合を無効化
+self.menuBar().hide()                   # ウィジェットとしても非表示
+```
+
+`setNativeMenuBar(False)` を省いても `hide()` のみで動作するが、両方指定すると確実。
+ezdxf 側の機能（Reload / Watch / Select Layout）はメニューから使えなくなるが、
+DXF-viewer 独自のツールバー／メニューで代替できる。
+
 ### マルチタブ
 
 - `QTabWidget` + `DXFTab` データクラスで管理
@@ -210,4 +228,4 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-06-15（領域検索 / Boundary Search、レイヤー統合 / Consolidate Layers を追加。検索のテキスト正規化を ezdxf plain_mtext ベースへ移行）*
+*最終更新: 2026-06-15（領域検索 / Boundary Search、レイヤー統合 / Consolidate Layers を追加。検索のテキスト正規化を ezdxf plain_mtext ベースへ移行。ezdxf CADViewer のメニューバーをグローバルメニューから非表示化）*

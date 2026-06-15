@@ -12,6 +12,11 @@ class PinchZoomCADViewer(CADViewer):
     def __init__(self):
         super().__init__()
 
+        # Hide ezdxf CADViewer's built-in menus (Select Layout, Reload, etc.)
+        # so they don't appear in macOS's global menu bar.
+        self.menuBar().setNativeMenuBar(False)
+        self.menuBar().hide()
+
         # Enable pinch gesture only
         self.grabGesture(Qt.PinchGesture)
 
