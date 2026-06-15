@@ -131,7 +131,9 @@ python dxf_viewer.py drawing1 drawing2.dxf
   非破壊。非マッチ要素は既存の色書換え機構で dim。全マッチを一括表示し zoom-to-fit する。
 - **永続ハイライト**: ダイアログの「Keep boundary highlight after Clear Search」が ON の場合、
   Clear Search で dim を戻した後も境界オーバーレイを残す。残した輪郭は
-  `Search > Clear Boundary Highlight` で消去する。
+  `Search > Clear Boundary Highlight` で消去する。検索がアクティブな状態（dim 中）で
+  Clear Boundary Highlight を押した場合は、オーバーレイ除去に加えて**元の色も復元**する
+  （図面が dim 一色のまま残らないようにする）。
 - **操作**: ツールバーの「Search Boundary...」「Clear Boundary Highlight」ボタン
   （`Search` メニューにも同項目あり。Ctrl+B でも起動）。
 - **状態（`DXFTab`）**: `region_analysis`・`matched_regions`・`boundary_overlay_items`・

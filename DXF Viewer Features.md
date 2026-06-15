@@ -148,9 +148,11 @@ matching boundaries. Complements the text search.
 - All matches are highlighted at once and the view zooms to fit them
 
 ### 3. Clearing
-- **Clear Search** (Ctrl+Shift+F): restores the dimmed drawing. If *Keep
-  boundary highlight* was checked, the red outlines remain.
-- **Clear Boundary Highlight**: removes the persisted red outlines.
+- **Clear Search** (Ctrl+Shift+F): restores the dimmed drawing to its original
+  colors. If *Keep boundary highlight* was checked, the red outlines remain.
+- **Clear Boundary Highlight**: removes the red outlines. If the search is still
+  active (drawing dimmed), it also restores the original colors, so the drawing
+  is never left in the single dim color.
 
 ## How It Works
 

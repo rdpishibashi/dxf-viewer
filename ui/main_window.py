@@ -862,16 +862,29 @@ class DXFViewerApp(QMainWindow):
             self.clear_boundary_highlight_action.setEnabled(False)
 
     def clear_boundary_highlight(self):
-        """Remove the persisted boundary overlay (does not touch entity colors)."""
+        """Remove the boundary overlay; also un-dim if a boundary search is active."""
         current_tab = self.get_current_tab()
         if not current_tab or not hasattr(current_tab, 'tab_data'):
             return
 
         tab_data = current_tab.tab_data
-        if not tab_data.boundary_overlay_items:
+        if not tab_data.boundary_overlay_items and not tab_data.boundary_search_active:
             return
 
-        self.remove_boundary_overlays(tab_data)
+        if tab_data.boundary_search_active:
+            # The drawing is still dimmed — restore original colors and re-render
+            # (otherwise the drawing would be left in the single dim color).
+            SearchManager.restore_original_colors(tab_data)
+            tab_data.boundary_search_active = False
+            self.refresh_viewer(tab_data)
+            tab_data.boundary_overlay_items = []  # destroyed by the refresh
+            if not tab_data.search_active:
+                self.clear_search_action.setEnabled(False)
+                self.toolbar_clear_search_action.setEnabled(False)
+        else:
+            # Only a persisted (post-Clear-Search) overlay remains.
+            self.remove_boundary_overlays(tab_data)
+
         tab_data.matched_regions = []
         tab_data.boundary_keep_highlight = False
         self.clear_boundary_highlight_action.setEnabled(False)
