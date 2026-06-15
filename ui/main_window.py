@@ -886,6 +886,10 @@ class DXFViewerApp(QMainWindow):
             qpoly = QPolygonF([QPointF(px, py) for (px, py) in region['polygon']])
             item = scene.addPolygon(qpoly, pen)
             item.setZValue(1e9)  # keep the outline above the drawing
+            # Let mouse clicks pass through to the entities underneath so symbols
+            # and wiring inside the region stay selectable.
+            item.setAcceptedMouseButtons(Qt.NoButton)
+            item.setAcceptHoverEvents(False)
             tab_data.boundary_overlay_items.append(item)
 
     def remove_boundary_overlays(self, tab_data):
