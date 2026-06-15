@@ -48,7 +48,11 @@ The DXF Viewer now includes a comprehensive text search functionality that allow
 ### Search Algorithm
 1. Iterates through all TEXT and MTEXT entities in the modelspace
 2. Also searches within block definitions
-3. Strips MTEXT formatting codes for accurate matching
+3. Normalizes format codes via `utils/text_utils.clean_mtext_format_codes()`
+   (ezdxf `plain_mtext`) so matching uses the *visible* text — applied to both
+   TEXT and MTEXT. This replaced an earlier regex that missed `\A`/`\W`/`\T`
+   codes present in most ULVAC MTEXT runs, which had prevented visible labels
+   (e.g. `MPD RACK1`) from matching.
 4. Supports regex patterns for whole-word matching
 
 ### Color Modification System
@@ -235,3 +239,7 @@ Tools → Change All Entity Colors... → Select "Gray"
 
 ## Change Log
 - 2025-08-27 03:56:45 UTC: Initial merge of SEARCH_FEATURE and COLOR_CHANGE_FEATURE into one Markdown.
+- 2026-06-15: Search text normalization moved to ezdxf `plain_mtext`
+  (`utils/text_utils.clean_mtext_format_codes`), fixing missed `\A`/`\W`/`\T`
+  MTEXT codes that prevented matching visible labels. Regression test added at
+  `tests/regression/test_mtext_clean_search.py`.
