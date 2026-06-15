@@ -7,17 +7,18 @@ import ezdxf
 from ezdxf.layouts import Modelspace
 from PyQt5.QtWidgets import (
     QMainWindow, QTabWidget, QFileDialog, QMessageBox,
-    QStatusBar, QToolBar, QAction, QDialog
+    QStatusBar, QToolBar, QAction, QDialog, QApplication
 )
-from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtGui import QKeySequence, QFont
+from PyQt5.QtCore import Qt, QPointF, QRectF
+from PyQt5.QtGui import QKeySequence, QFont, QColor, QPen, QPolygonF
 
 from core.tab_manager import DXFTab
 from core.color_manager import ColorManager
 from core.search_manager import SearchManager
+from core.region_search_manager import RegionSearchManager
 from ui.dialogs import (
     BackgroundColorDialog, ColorChangeDialog, TextSearchDialog,
-    FileInfoDialog, ExportImageDialog
+    BoundarySearchDialog, FileInfoDialog, ExportImageDialog
 )
 
 # ezdxf monkey patch for CADViewer compatibility
@@ -100,10 +101,14 @@ class DXFViewerApp(QMainWindow):
         if current_tab and hasattr(current_tab, 'tab_data'):
             tab_data = current_tab.tab_data
             has_results = len(tab_data.search_results) > 0 and tab_data.search_active
-            self.clear_search_action.setEnabled(has_results)
-            self.toolbar_clear_search_action.setEnabled(has_results)
+            self.clear_search_action.setEnabled(has_results or tab_data.boundary_search_active)
+            self.toolbar_clear_search_action.setEnabled(has_results or tab_data.boundary_search_active)
             self.find_next_action.setEnabled(len(tab_data.search_results) > 1)
             self.find_prev_action.setEnabled(len(tab_data.search_results) > 1)
+
+            # Boundary highlight clear is available whenever overlays exist
+            self.clear_boundary_highlight_action.setEnabled(
+                len(tab_data.boundary_overlay_items) > 0)
             
             # Update color change UI
             self.restore_colors_action.setEnabled(tab_data.color_change_active)
@@ -242,7 +247,24 @@ class DXFViewerApp(QMainWindow):
         self.find_prev_action.triggered.connect(self.find_previous)
         self.find_prev_action.setEnabled(False)
         search_menu.addAction(self.find_prev_action)
-    
+
+        search_menu.addSeparator()
+
+        # Search Boundary (rectangular region by name)
+        self.search_boundary_action = QAction('Search Boundary...', self)
+        self.search_boundary_action.setShortcut(QKeySequence('Ctrl+B'))
+        self.search_boundary_action.setFont(menu_font)
+        self.search_boundary_action.triggered.connect(self.search_boundary)
+        self.search_boundary_action.setEnabled(False)
+        search_menu.addAction(self.search_boundary_action)
+
+        # Clear Boundary Highlight (removes persisted region overlays)
+        self.clear_boundary_highlight_action = QAction('Clear Boundary Highlight', self)
+        self.clear_boundary_highlight_action.setFont(menu_font)
+        self.clear_boundary_highlight_action.triggered.connect(self.clear_boundary_highlight)
+        self.clear_boundary_highlight_action.setEnabled(False)
+        search_menu.addAction(self.clear_boundary_highlight_action)
+
     def create_toolbar(self):
         """ツールバーを作成"""
         toolbar = QToolBar()
@@ -451,6 +473,7 @@ class DXFViewerApp(QMainWindow):
         self.toolbar_info_action.setEnabled(file_loaded)
         self.search_action.setEnabled(file_loaded)
         self.toolbar_search_action.setEnabled(file_loaded)
+        self.search_boundary_action.setEnabled(file_loaded)
         self.change_colors_action.setEnabled(file_loaded)
         self.toolbar_change_colors_action.setEnabled(file_loaded)
         self.background_color_action.setEnabled(file_loaded)
@@ -490,9 +513,11 @@ class DXFViewerApp(QMainWindow):
             return
         
         # Clear any active search first
-        if tab_data.search_active:
+        if tab_data.search_active or tab_data.boundary_search_active:
             self.clear_search()
-        
+        # A boundary overlay persisted after Clear Search would be stale now
+        self.clear_boundary_highlight()
+
         # Show color dialog
         dialog = ColorChangeDialog(self)
         if dialog.exec_() == QDialog.Accepted:
@@ -623,25 +648,33 @@ class DXFViewerApp(QMainWindow):
         current_tab = self.get_current_tab()
         if current_tab and hasattr(current_tab, 'tab_data'):
             tab_data = current_tab.tab_data
-            
+
+            cleared = False
+
             if tab_data.search_active:
                 # Restore original colors
                 SearchManager.restore_original_colors(tab_data)
-                
+
                 # Clear search results
                 tab_data.search_results.clear()
                 tab_data.current_search_index = -1
                 tab_data.search_active = False
-                
+
                 # Refresh the viewer
                 self.refresh_viewer(tab_data)
-                
+
                 # Disable navigation actions
-                self.clear_search_action.setEnabled(False)
-                self.toolbar_clear_search_action.setEnabled(False)
                 self.find_next_action.setEnabled(False)
                 self.find_prev_action.setEnabled(False)
-                
+                cleared = True
+
+            if tab_data.boundary_search_active:
+                self._clear_boundary_search(tab_data)
+                cleared = True
+
+            if cleared:
+                self.clear_search_action.setEnabled(False)
+                self.toolbar_clear_search_action.setEnabled(False)
                 self.status_bar.showMessage("Search cleared")
     
     def find_next(self):
@@ -665,7 +698,191 @@ class DXFViewerApp(QMainWindow):
         if tab_data.search_results:
             tab_data.current_search_index = (tab_data.current_search_index - 1) % len(tab_data.search_results)
             self.navigate_to_result(tab_data, tab_data.current_search_index)
-    
+
+    # ------------------------------------------------------------------
+    # Boundary (rectangular region) search
+    # ------------------------------------------------------------------
+    def search_boundary(self):
+        """Open the boundary search dialog and highlight matching regions."""
+        current_tab = self.get_current_tab()
+        if not current_tab or not hasattr(current_tab, 'tab_data'):
+            return
+
+        tab_data = current_tab.tab_data
+        if not tab_data.dxf_doc:
+            QMessageBox.warning(self, "No File", "No DXF file is currently loaded.")
+            return
+
+        dialog = BoundarySearchDialog(self)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+
+        params = dialog.get_search_params()
+        query = params['text'].strip()
+        if not query:
+            return
+
+        # A boundary search is mutually exclusive with the text/boundary search
+        # already applied; clear any existing highlight and persisted overlay.
+        self.clear_search()
+        self.clear_boundary_highlight()
+
+        # The first analysis (and the dim re-render) can take several seconds on
+        # large files, so keep the busy cursor over the whole heavy operation.
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        analysis = None
+        matched = []
+        try:
+            analysis = RegionSearchManager.get_analysis(tab_data)
+            if analysis and not analysis.get('error'):
+                matched = RegionSearchManager.find_matching_regions(
+                    analysis, query, params['case_sensitive'], params['whole_word'])
+                if matched:
+                    self._apply_boundary_highlight(
+                        tab_data, matched, params['dim_color'], params['keep_highlight'])
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        # User-facing messages are shown without the busy cursor.
+        if not analysis or analysis.get('error'):
+            message = (analysis or {}).get('error') or "Region analysis failed."
+            QMessageBox.information(self, "Search Boundary", message)
+            self.status_bar.showMessage("No regions detected")
+            return
+
+        if not matched:
+            QMessageBox.information(
+                self, "Search Boundary",
+                f"No regions matching '{query}' were found.")
+            self.status_bar.showMessage("No matching regions found")
+            return
+
+        self.status_bar.showMessage(
+            f"Found {len(matched)} region(s) matching '{query}'")
+
+    def _apply_boundary_highlight(self, tab_data, matched, dim_color, keep_highlight):
+        """Dim the drawing, draw region overlays, zoom to fit, and update state."""
+        tab_data.matched_regions = matched
+        tab_data.boundary_keep_highlight = keep_highlight
+        tab_data.search_dim_color = dim_color
+
+        SearchManager.store_all_entity_colors(tab_data)
+        self._dim_all_entities(tab_data)
+        self.refresh_viewer(tab_data)
+        tab_data.boundary_overlay_items = []  # destroyed by the refresh above
+        self.draw_boundary_overlays(tab_data, matched)
+        self.zoom_to_regions(tab_data, matched)
+
+        tab_data.boundary_search_active = True
+        self.clear_search_action.setEnabled(True)
+        self.toolbar_clear_search_action.setEnabled(True)
+        self.clear_boundary_highlight_action.setEnabled(True)
+
+    def _clear_boundary_search(self, tab_data):
+        """Restore dimmed colors; keep or drop the overlay per the saved flag."""
+        SearchManager.restore_original_colors(tab_data)
+        tab_data.boundary_search_active = False
+
+        keep = tab_data.boundary_keep_highlight
+        matched = tab_data.matched_regions
+
+        # Rebuilding the scene destroys the existing overlay items.
+        self.refresh_viewer(tab_data)
+        tab_data.boundary_overlay_items = []
+
+        if keep and matched:
+            self.draw_boundary_overlays(tab_data, matched)
+            self.clear_boundary_highlight_action.setEnabled(True)
+        else:
+            tab_data.matched_regions = []
+            self.clear_boundary_highlight_action.setEnabled(False)
+
+    def clear_boundary_highlight(self):
+        """Remove the persisted boundary overlay (does not touch entity colors)."""
+        current_tab = self.get_current_tab()
+        if not current_tab or not hasattr(current_tab, 'tab_data'):
+            return
+
+        tab_data = current_tab.tab_data
+        if not tab_data.boundary_overlay_items:
+            return
+
+        self.remove_boundary_overlays(tab_data)
+        tab_data.matched_regions = []
+        tab_data.boundary_keep_highlight = False
+        self.clear_boundary_highlight_action.setEnabled(False)
+        self.status_bar.showMessage("Boundary highlight cleared")
+
+    def _dim_all_entities(self, tab_data):
+        """Dim every entity to the selected dim color (boundary search)."""
+        dim_index, dim_rgb = tab_data.search_dim_color
+
+        def dim(entity):
+            if hasattr(entity.dxf, 'color'):
+                try:
+                    entity.dxf.color = dim_index
+                    entity.dxf.true_color = dim_rgb
+                except Exception:
+                    pass
+
+        for entity in tab_data.dxf_doc.modelspace():
+            dim(entity)
+        for block in tab_data.dxf_doc.blocks:
+            if not block.name.startswith('*'):
+                for entity in block:
+                    dim(entity)
+
+    def draw_boundary_overlays(self, tab_data, regions):
+        """Draw matched region outlines as overlay items on the CAD scene."""
+        graphics_view = tab_data.cad_viewer.graphics_view
+        scene = graphics_view.scene() if graphics_view else None
+        if scene is None:
+            return
+
+        pen = QPen(QColor(255, 0, 0))  # red boundary highlight
+        pen.setWidthF(2.0)
+        pen.setCosmetic(True)  # constant pixel width regardless of zoom
+
+        for region in regions:
+            # DXF Y is inverted in the scene (scene_y = -dxf_y).
+            qpoly = QPolygonF([QPointF(px, -py) for (px, py) in region['polygon']])
+            item = scene.addPolygon(qpoly, pen)
+            item.setZValue(1e9)  # keep the outline above the drawing
+            tab_data.boundary_overlay_items.append(item)
+
+    def remove_boundary_overlays(self, tab_data):
+        """Remove overlay items from the scene and clear the list."""
+        graphics_view = tab_data.cad_viewer.graphics_view
+        scene = graphics_view.scene() if graphics_view else None
+        for item in tab_data.boundary_overlay_items:
+            try:
+                if scene is not None:
+                    scene.removeItem(item)
+            except Exception:
+                pass
+        tab_data.boundary_overlay_items = []
+
+    def zoom_to_regions(self, tab_data, regions):
+        """Fit the view to the bounding box of all matched regions."""
+        graphics_view = tab_data.cad_viewer.graphics_view
+        if not graphics_view or not regions:
+            return
+
+        xs, ys = [], []
+        for region in regions:
+            for (px, py) in region['polygon']:
+                xs.append(px)
+                ys.append(-py)  # scene coordinates
+        if not xs:
+            return
+
+        width = max(xs) - min(xs)
+        height = max(ys) - min(ys)
+        margin = 0.05 * max(width, height, 1.0)
+        rect = QRectF(min(xs) - margin, min(ys) - margin,
+                      width + 2 * margin, height + 2 * margin)
+        graphics_view.fitInView(rect, Qt.KeepAspectRatio)
+
     def find_text_entities(self, doc, search_text, case_sensitive=False, whole_word=False):
         """Find all text entities matching search criteria"""
         import re

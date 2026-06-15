@@ -56,5 +56,12 @@ class DXFTab:
         self.color_change_active = False  # Track if colors have been changed
         self.color_change_backup = {}  # Store original colors for color change feature
 
+        # Boundary (rectangular region) search attributes
+        self.region_analysis = None        # Cached analyze_dxf_regions() result
+        self.matched_regions = []          # Region dicts matched by the last boundary search
+        self.boundary_overlay_items = []   # QGraphicsItems drawn for boundary highlight
+        self.boundary_search_active = False  # Dimming + highlight currently applied
+        self.boundary_keep_highlight = False  # Keep the overlay after Clear Search
+
         # Background color (stored as hex string for ezdxf compatibility)
         self.background_color = "#000000"  # Default black background
