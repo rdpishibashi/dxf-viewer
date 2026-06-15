@@ -54,6 +54,7 @@ python dxf_viewer.py drawing1 drawing2
 
 - **Multi-tab Interface**: View multiple DXF files simultaneously
 - **Search**: Find text entities with customizable highlighting
+- **Boundary Search**: Find rectangular regions by name and highlight their boundaries (Ctrl+B)
 - **Color Management**: Change entity colors with background-aware rendering
 - **Background Color**: Customize viewer background
 - **Export**: Convert DXF to PNG/SVG/PDF

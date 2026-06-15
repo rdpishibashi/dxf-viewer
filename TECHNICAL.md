@@ -22,7 +22,9 @@ DXF-viewer/
 ├── core/
 │   ├── tab_manager.py      # DXFTab: タブごとの状態管理
 │   ├── color_manager.py    # エンティティ色操作（静的メソッド中心）
-│   └── search_manager.py   # テキスト検索・ハイライトロジック
+│   ├── search_manager.py   # テキスト検索・ハイライトロジック
+│   ├── region_detector.py  # 矩形領域（直交ポリゴン）検出（DXF-extract-labels より移植）
+│   └── region_search_manager.py  # 領域検索（解析キャッシュ＋名称マッチ）
 ├── workers/
 │   └── ezdxf_worker.py     # バックグラウンドスレッド（ezdxf コマンド実行）
 └── utils/
@@ -55,6 +57,7 @@ UI Layer (ui/)
 | `DXFTab` | `core/tab_manager.py` | タブ 1 枚分の状態（ファイルパス・選択エンティティ等）|
 | `ColorManager` | `core/color_manager.py` | エンティティ色の取得・変更（静的メソッド）|
 | `SearchManager` | `core/search_manager.py` | テキスト検索・ハイライト（静的メソッド）|
+| `RegionSearchManager` | `core/region_search_manager.py` | 領域検索：解析キャッシュ・名称マッチ（UI 非依存）|
 | `EzdxfWorker` | `workers/ezdxf_worker.py` | ezdxf コマンドをバックグラウンドスレッドで実行 |
 
 ---
@@ -92,6 +95,32 @@ python dxf_viewer.py drawing1 drawing2.dxf
     検索ヒットしなかった。`plain_mtext` 化でこれを解消（EE6868/EE6888 計 12,159 件で書式コード漏れゼロ・退行なしを確認）。
   - 副次効果: 前後空白・全角空白・`\P` 段落跨ぎの正規化。`%%c`/`%%d`/`%%p` は Ø/°/± へ変換。
   - 回帰テスト: `tests/regression/test_mtext_clean_search.py`
+
+### 領域検索 / Boundary Search（`core/region_detector.py` + `core/region_search_manager.py`）
+
+手書き電気回路図中の矩形領域（ラック・ボックス等の機能領域）を**名称で検索**し、
+該当する境界をハイライトする。テキスト検索と並列の機能。
+
+- **検出**: `region_detector.analyze_dxf_regions(file_path)`。図面枠（lineweight=100）と
+  領域境界線（lineweight=25 / color=2＝ACI黄）を識別キーに、端点接続ベースの半面探索で
+  閉領域を列挙し、下端横エッジ近傍のラベルから名称候補を付与する。DXF-extract-labels の
+  同名モジュールを移植したもの（依存関数のみ自己完結化、アルゴリズム本体は同一）。
+  設定は `DEFAULT_REGION_CONFIG`（DXF-extract-labels のデフォルト値）。
+- **マッチ**: `RegionSearchManager.find_matching_regions()` が入力名称を各領域の
+  `default_name`＋`name_candidates` と照合（case sensitive / whole word 対応）。
+- **キャッシュ**: `RegionSearchManager.get_analysis()` が解析結果を `DXFTab.region_analysis`
+  に保持。初回のみ実行（大ファイルで数秒、ビジーカーソル表示）、2 回目以降は即時。
+  解析は**ディスク上のファイルを読む**ため、ビューア上の dim（色書換え）の影響を受けない。
+- **ハイライト（オーバーレイ方式）**: マッチ領域のポリゴンを QGraphicsItem の赤い輪郭線として
+  シーンに重ね描画（`DXFViewerApp.draw_boundary_overlays()`）。doc を書き換えないため
+  非破壊。非マッチ要素は既存の色書換え機構で dim。全マッチを一括表示し zoom-to-fit する。
+- **永続ハイライト**: ダイアログの「Keep boundary highlight after Clear Search」が ON の場合、
+  Clear Search で dim を戻した後も境界オーバーレイを残す。残した輪郭は
+  `Search > Clear Boundary Highlight` で消去する。
+- **メニュー**: `Search > Search Boundary...`（Ctrl+B）、`Search > Clear Boundary Highlight`。
+- **状態（`DXFTab`）**: `region_analysis`・`matched_regions`・`boundary_overlay_items`・
+  `boundary_search_active`・`boundary_keep_highlight`。
+- 回帰テスト: `tests/regression/test_region_search.py`（検出枠数・領域数・名称マッチ件数）。
 
 ### 色変更（`core/color_manager.py`）
 
@@ -144,4 +173,4 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-06-15（検索のテキスト正規化を ezdxf plain_mtext ベースへ移行）*
+*最終更新: 2026-06-15（領域検索 / Boundary Search を追加。検索のテキスト正規化を ezdxf plain_mtext ベースへ移行）*

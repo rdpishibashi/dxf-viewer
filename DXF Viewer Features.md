@@ -123,6 +123,57 @@ Potential improvements for future versions:
 
 ---
 
+# C. Boundary (Region) Search Feature
+
+## Overview
+Search a drawing for **rectangular regions** (functional areas such as racks or
+boxes enclosed by hand-drawn boundary lines) **by name** and highlight the
+matching boundaries. Complements the text search.
+
+## Features
+
+### 1. Search Dialog
+- **Access**: Menu → Search → Search Boundary... (or press Ctrl+B)
+- **Options**:
+  - **Search Text**: region name to find
+  - **Case sensitive** / **Whole words only**: same semantics as text search
+  - **Color for non-matching entities**: dim color applied to everything else
+  - **Keep boundary highlight after Clear Search**: when checked, the region
+    outline stays visible after Clear Search restores the dimmed drawing
+
+### 2. Visual Highlighting
+- Matching region boundaries are drawn as **red outlines** overlaid on the view
+  (non-destructive — the DXF document is not recolored for the outline)
+- All other entities are dimmed to the selected color
+- All matches are highlighted at once and the view zooms to fit them
+
+### 3. Clearing
+- **Clear Search** (Ctrl+Shift+F): restores the dimmed drawing. If *Keep
+  boundary highlight* was checked, the red outlines remain.
+- **Clear Boundary Highlight**: removes the persisted red outlines.
+
+## How It Works
+
+### Region Detection
+- Reuses the rectangular-region detection from DXF-extract-labels
+  (`core/region_detector.py`). Identification keys: drawing frame =
+  lineweight 100; region boundary = lineweight 25 with color 2 (ACI yellow).
+- Region names are taken from labels near the bottom edge of each region.
+- Detection reads the file from disk, so it is unaffected by on-screen dimming.
+
+### Performance
+- The first boundary search analyzes the drawing (a few seconds on large files,
+  shown with a busy cursor). The result is cached per tab, so subsequent
+  boundary searches are instant.
+
+## Known Limitations
+1. Requires drawings that use the ULVAC frame/boundary line conventions
+   (lineweight 100 frame, lineweight 25 / color 2 boundaries). Drawings without
+   them report "no regions detected".
+2. Unnamed regions are not matched (search is by name).
+
+---
+
 # B. DXF Viewer - Color Change Feature
 
 ## Overview
@@ -243,3 +294,8 @@ Tools → Change All Entity Colors... → Select "Gray"
   (`utils/text_utils.clean_mtext_format_codes`), fixing missed `\A`/`\W`/`\T`
   MTEXT codes that prevented matching visible labels. Regression test added at
   `tests/regression/test_mtext_clean_search.py`.
+- 2026-06-15: Added Boundary (Region) Search — search rectangular regions by
+  name and highlight their boundaries (overlay), reusing the region detection
+  from DXF-extract-labels (`core/region_detector.py`,
+  `core/region_search_manager.py`). Regression test at
+  `tests/regression/test_region_search.py`.
