@@ -28,6 +28,7 @@ DXF-viewer/
 └── utils/
     ├── file_utils.py       # ファイル検証・パス処理
     ├── app_utils.py        # アプリケーション初期化・シグナル定義
+    ├── text_utils.py       # MTEXT/TEXT 書式コード除去（検索一致用・plain_mtext）
     └── export_utils.py     # エクスポート機能（旧版）
     └── export_utils_v2.py  # エクスポート機能（新版・matplotlib 使用）
 ```
@@ -82,8 +83,15 @@ python dxf_viewer.py drawing1 drawing2.dxf
 
 ### 検索（`core/search_manager.py`）
 
-- `SearchManager.find_text()` で TEXT/MTEXT エンティティを走査
+- `SearchManager.find_text_entities()` で TEXT/MTEXT エンティティを走査（modelspace + ブロック定義）
 - マッチしたエンティティをハイライト色に変更
+- **テキスト正規化**: `utils/text_utils.clean_mtext_format_codes()` で書式コードを除去してから一致判定する。
+  ezdxf の `plain_mtext()` ベース。TEXT/MTEXT 両経路に適用。
+  - 旧実装は `\H \P \L \p \f \F \c \C` のみを正規表現で除去しており、ULVAC EE 図面でほぼ全 MTEXT が持つ
+    `\A`（整列）・`\W`（幅）・`\T`（トラッキング）コードを取りこぼし、可視文字列（例 `MPD RACK1`）が
+    検索ヒットしなかった。`plain_mtext` 化でこれを解消（EE6868/EE6888 計 12,159 件で書式コード漏れゼロ・退行なしを確認）。
+  - 副次効果: 前後空白・全角空白・`\P` 段落跨ぎの正規化。`%%c`/`%%d`/`%%p` は Ø/°/± へ変換。
+  - 回帰テスト: `tests/regression/test_mtext_clean_search.py`
 
 ### 色変更（`core/color_manager.py`）
 
@@ -133,3 +141,7 @@ matplotlib       # エクスポート機能で使用
 | ブックマーク機能 | `DXFTab` に座標リストを保持し、ジャンプボタンを `ui/` に追加 |
 | ズームレベルの保持 | `DXFTab.zoom_level` フィールドを追加してタブ切り替え時に復元 |
 | 設定の永続化 | `QSettings` で背景色・ウィンドウサイズ等をアプリ設定に保存 |
+
+---
+
+*最終更新: 2026-06-15（検索のテキスト正規化を ezdxf plain_mtext ベースへ移行）*

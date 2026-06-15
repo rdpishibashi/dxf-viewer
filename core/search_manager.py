@@ -2,6 +2,7 @@
 
 import re
 from .tab_manager import SearchResult
+from utils.text_utils import clean_mtext_format_codes
 
 
 class SearchManager:
@@ -34,13 +35,10 @@ class SearchManager:
         msp = doc.modelspace()
         for entity in msp:
             if entity.dxftype() in ['TEXT', 'MTEXT']:
-                entity_text = entity.dxf.text if hasattr(entity.dxf, 'text') else ''
+                raw_text = entity.dxf.text if hasattr(entity.dxf, 'text') else ''
 
-                # Handle MTEXT formatting codes
-                if entity.dxftype() == 'MTEXT':
-                    # Remove common MTEXT formatting codes
-                    entity_text = re.sub(r'\\[HPLpfFcC][^;]*;', '', entity_text)
-                    entity_text = re.sub(r'[{}]', '', entity_text)
+                # Normalize format codes (MTEXT/TEXT) so matching uses visible text
+                entity_text = clean_mtext_format_codes(raw_text)
 
                 compare_text = entity_text if case_sensitive else entity_text.lower()
 
@@ -89,11 +87,9 @@ class SearchManager:
 
             for entity in block:
                 if entity.dxftype() in ['TEXT', 'MTEXT']:
-                    entity_text = entity.dxf.text if hasattr(entity.dxf, 'text') else ''
+                    raw_text = entity.dxf.text if hasattr(entity.dxf, 'text') else ''
 
-                    if entity.dxftype() == 'MTEXT':
-                        entity_text = re.sub(r'\\[HPLpfFcC][^;]*;', '', entity_text)
-                        entity_text = re.sub(r'[{}]', '', entity_text)
+                    entity_text = clean_mtext_format_codes(raw_text)
 
                     compare_text = entity_text if case_sensitive else entity_text.lower()
 
