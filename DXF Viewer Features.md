@@ -123,6 +123,88 @@ Potential improvements for future versions:
 
 ---
 
+# C. Boundary (Region) Search Feature
+
+## Overview
+Search a drawing for **rectangular regions** (functional areas such as racks or
+boxes enclosed by hand-drawn boundary lines) **by name** and highlight the
+matching boundaries. Complements the text search.
+
+## Features
+
+### 1. Search Dialog
+- **Access**: Menu → Search → Search Boundary... (or press Ctrl+B)
+- **Options**:
+  - **Search Text**: region name to find
+  - **Case sensitive** / **Whole words only**: same semantics as text search
+  - **Color for non-matching entities**: dim color applied to everything else
+  - **Keep boundary highlight after Clear Search**: when checked, the region
+    outline stays visible after Clear Search restores the dimmed drawing
+
+### 2. Visual Highlighting
+- Matching region boundaries are drawn as **red outlines** overlaid on the view
+  (non-destructive — the DXF document is not recolored for the outline)
+- All other entities are dimmed to the selected color
+- All matches are highlighted at once and the view zooms to fit them
+
+### 3. Clearing
+- **Clear Search** (Ctrl+Shift+F): restores the dimmed drawing to its original
+  colors. If *Keep boundary highlight* was checked, the red outlines remain.
+- **Clear Boundary Highlight**: removes the red outlines. If the search is still
+  active (drawing dimmed), it also restores the original colors, so the drawing
+  is never left in the single dim color.
+
+## How It Works
+
+### Region Detection
+- Reuses the rectangular-region detection from DXF-extract-labels
+  (`core/region_detector.py`). Identification keys: drawing frame =
+  lineweight 100; region boundary = lineweight 25 with color 2 (ACI yellow).
+- Region names are taken from labels near the bottom edge of each region.
+- Detection reads the file from disk, so it is unaffected by on-screen dimming.
+
+### Performance
+- The first boundary search analyzes the drawing (a few seconds on large files,
+  shown with a busy cursor). The result is cached per tab, so subsequent
+  boundary searches are instant.
+
+## Known Limitations
+1. Requires drawings that use the ULVAC frame/boundary line conventions
+   (lineweight 100 frame, lineweight 25 / color 2 boundaries). Drawings without
+   them report "no regions detected".
+2. Unnamed regions are not matched (search is by name).
+
+---
+
+# D. Layer Consolidation Feature
+
+## Overview
+Collapse a drawing's many source layers (ULVAC exports contain dozens of
+`NoLayerName_xxx` layers) into two clearly named English layers:
+- **Boundaries**: the boundary linework of the detected rectangular regions
+- **Imported**: every other entity
+
+## Access
+- Toolbar → Consolidate Layers (or Menu → Tools → Consolidate Layers)
+
+## How It Works
+1. Runs (cached) region detection to find the rectangular regions.
+2. Modelspace lines that use the region line style (lineweight 25, ACI color 2)
+   and lie on a detected region edge are moved to **Boundaries**.
+3. All other entities (including block contents and paperspace) are moved to
+   **Imported**.
+4. The now-unused source layers are removed (the `0` and `Defpoints` layers are
+   kept).
+
+## Important Notes
+1. **Non-destructive**: only the in-memory document is changed; the file on disk
+   is untouched. **Reopen the file to restore the original layers.**
+2. The change is reflected in the viewer's layer panel and in image export.
+3. Boundary lines that live inside block definitions are not reclassified (block
+   content is shared across INSERTs) and remain in **Imported**.
+
+---
+
 # B. DXF Viewer - Color Change Feature
 
 ## Overview
@@ -243,3 +325,16 @@ Tools → Change All Entity Colors... → Select "Gray"
   (`utils/text_utils.clean_mtext_format_codes`), fixing missed `\A`/`\W`/`\T`
   MTEXT codes that prevented matching visible labels. Regression test added at
   `tests/regression/test_mtext_clean_search.py`.
+- 2026-06-15: Added Boundary (Region) Search — search rectangular regions by
+  name and highlight their boundaries (overlay), reusing the region detection
+  from DXF-extract-labels (`core/region_detector.py`,
+  `core/region_search_manager.py`). Regression test at
+  `tests/regression/test_region_search.py`.
+- 2026-06-15: Added Layer Consolidation (Tools → Consolidate Layers) — collapse
+  all source layers into `Boundaries` (detected region edges) and `Imported`
+  (`core/layer_consolidator.py`). Non-destructive; reopen to restore. Regression
+  test at `tests/regression/test_layer_consolidation.py`.
+- 2026-06-15: Fixed Restore Colors not returning to the import colors —
+  `ColorManager` now backs up and restores `true_color` as well as the ACI color
+  (true_color takes precedence when rendering, so leaving it set kept the
+  changed color).

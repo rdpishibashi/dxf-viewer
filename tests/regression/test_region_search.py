@@ -1,0 +1,95 @@
+"""Regression test for boundary (rectangular region) search.
+
+Exercises the UI-independent core: region detection (`core.region_detector`)
+and name matching (`core.region_search_manager`) against the real ULVAC sample
+drawings. The overlay drawing itself is GUI code and is not covered here.
+
+Run:
+    python tests/regression/test_region_search.py [path/to/EE*.dxf ...]
+
+The DXF samples are not committed; the sample-data checks are skipped (exit 0)
+when the files are absent.
+"""
+
+import glob
+import os
+import sys
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from core.region_detector import analyze_dxf_regions
+from core.region_search_manager import RegionSearchManager
+
+
+# Expected detection/matching per sample file (established 2026-06-15).
+EXPECTED = {
+    'EE6868-500-01C.dxf': {
+        'frames': 13,
+        'min_regions': 20,
+        'queries': {
+            ('RACK1', False, False): 18,   # 'RACK1' + 'MPD RACK1'
+            ('rack1', True, False): 0,      # case-sensitive miss
+            ('MPD', False, False): 10,      # 'MPD RACK1' + 'MPD RACK2'
+            ('NONEXIST', False, False): 0,
+        },
+    },
+    'EE6888-602-01A.dxf': {
+        'frames': 1,
+        'min_regions': 3,
+        'queries': {
+            ('SYSTEM', False, False): 1,
+            ('SB-1A', False, False): 2,
+            ('nonexist', False, False): 0,
+        },
+    },
+}
+
+
+def check_file(path):
+    name = os.path.basename(path)
+    exp = EXPECTED.get(name)
+    if exp is None:
+        print(f"{name}: no expectations recorded — skipping")
+        return True
+
+    analysis = analyze_dxf_regions(path)
+    if analysis.get('error'):
+        print(f"{name}: FAIL analysis error: {analysis['error']}")
+        return False
+
+    ok = True
+    frames = len(analysis['frames'])
+    regions = len(analysis['regions'])
+    if frames != exp['frames']:
+        print(f"{name}: FAIL frames {frames} != {exp['frames']}")
+        ok = False
+    if regions < exp['min_regions']:
+        print(f"{name}: FAIL regions {regions} < {exp['min_regions']}")
+        ok = False
+
+    for (query, cs, ww), expected_count in exp['queries'].items():
+        got = len(RegionSearchManager.find_matching_regions(analysis, query, cs, ww))
+        if got != expected_count:
+            print(f"{name}: FAIL query={query!r} case={cs} whole={ww} "
+                  f"got {got} != {expected_count}")
+            ok = False
+
+    print(f"{name}: {'OK' if ok else 'FAIL'} (frames={frames}, regions={regions})")
+    return ok
+
+
+def main(argv):
+    paths = argv[1:] or sorted(glob.glob(os.path.join(_ROOT, 'EE*.dxf')))
+    if not paths:
+        print("No EE*.dxf samples found — skipping region search regression.")
+        print('PASS')
+        return 0
+    ok = all(check_file(p) for p in paths)
+    print('PASS' if ok else 'FAIL')
+    return 0 if ok else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))

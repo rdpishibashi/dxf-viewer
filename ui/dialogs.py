@@ -247,6 +247,106 @@ class TextSearchDialog(QDialog):
         return color_map.get(color_name, (251, 0xC0C0C0))
 
 
+class BoundarySearchDialog(QDialog):
+    """Search dialog for rectangular region (boundary) names."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Search Boundary in DXF")
+        self.setModal(True)
+        self.resize(400, 340)
+
+        layout = QVBoxLayout(self)
+
+        # Region name input
+        search_group = QGroupBox("Search Text")
+        search_layout = QVBoxLayout()
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Enter region name to search...")
+        self.search_input.returnPressed.connect(self.accept)
+        search_layout.addWidget(self.search_input)
+
+        # Search options
+        options_layout = QHBoxLayout()
+        self.case_sensitive_check = QCheckBox("Case sensitive")
+        self.whole_word_check = QCheckBox("Whole words only")
+        options_layout.addWidget(self.case_sensitive_check)
+        options_layout.addWidget(self.whole_word_check)
+        search_layout.addLayout(options_layout)
+
+        search_group.setLayout(search_layout)
+        layout.addWidget(search_group)
+
+        # Non-matching entity color selection
+        color_group = QGroupBox("Non-matching Entity Color")
+        color_layout = QVBoxLayout()
+
+        self.color_combo = QComboBox()
+        self.color_combo.addItems([
+            "Light Gray",
+            "Gray",
+            "White",
+            "Black",
+            "Red",
+            "Yellow",
+            "Green",
+            "Cyan",
+            "Blue",
+            "Magenta"
+        ])
+        self.color_combo.setCurrentText("Light Gray")
+
+        color_layout.addWidget(QLabel("Color for non-matching entities:"))
+        color_layout.addWidget(self.color_combo)
+
+        color_group.setLayout(color_layout)
+        layout.addWidget(color_group)
+
+        # Keep the boundary highlight after Clear Search
+        self.keep_highlight_check = QCheckBox(
+            "Keep boundary highlight after Clear Search")
+        layout.addWidget(self.keep_highlight_check)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        self.search_button = QPushButton("Search")
+        self.search_button.clicked.connect(self.accept)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(self.search_button)
+        button_layout.addWidget(self.cancel_button)
+        layout.addLayout(button_layout)
+
+        self.search_input.setFocus()
+
+    def get_search_params(self):
+        """Get boundary search parameters."""
+        return {
+            'text': self.search_input.text(),
+            'case_sensitive': self.case_sensitive_check.isChecked(),
+            'whole_word': self.whole_word_check.isChecked(),
+            'dim_color': self.get_selected_dim_color(),
+            'keep_highlight': self.keep_highlight_check.isChecked()
+        }
+
+    def get_selected_dim_color(self):
+        """Get the selected DXF color index and RGB value for dimmed entities."""
+        color_map = {
+            "Light Gray": (251, 0xC0C0C0),
+            "Gray": (8, 0x808080),
+            "White": (7, 0xFFFFFF),
+            "Black": (250, 0x000000),
+            "Red": (1, 0xFF0000),
+            "Yellow": (2, 0xFFFF00),
+            "Green": (3, 0x00FF00),
+            "Cyan": (4, 0x00FFFF),
+            "Blue": (5, 0x0000FF),
+            "Magenta": (6, 0xFF00FF)
+        }
+        return color_map.get(self.color_combo.currentText(), (251, 0xC0C0C0))
+
+
 class FileInfoDialog(QDialog):
     """Dialog to display DXF file information."""
 

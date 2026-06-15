@@ -16,25 +16,25 @@ class ColorManager:
 
         tab_data.color_change_backup.clear()
 
+        def store(entity):
+            if not hasattr(entity.dxf, 'handle'):
+                return
+            handle = entity.dxf.handle
+            # apply_color_to_all_entities sets both color and true_color, and
+            # true_color takes precedence when rendering, so both must be backed
+            # up (and restored) for Restore Colors to return the import colors.
+            color = entity.dxf.color if hasattr(entity.dxf, 'color') else None
+            true_color = entity.dxf.true_color if hasattr(entity.dxf, 'true_color') else None
+            tab_data.color_change_backup[handle] = (color, true_color)
+
         # Store colors for modelspace entities
-        msp = tab_data.dxf_doc.modelspace()
-        for entity in msp:
-            if hasattr(entity.dxf, 'handle'):
-                handle = entity.dxf.handle
-                if hasattr(entity.dxf, 'color'):
-                    tab_data.color_change_backup[handle] = entity.dxf.color
-                else:
-                    tab_data.color_change_backup[handle] = None
+        for entity in tab_data.dxf_doc.modelspace():
+            store(entity)
 
         # Store colors for block entities
         for block in tab_data.dxf_doc.blocks:
             for entity in block:
-                if hasattr(entity.dxf, 'handle'):
-                    handle = entity.dxf.handle
-                    if hasattr(entity.dxf, 'color'):
-                        tab_data.color_change_backup[handle] = entity.dxf.color
-                    else:
-                        tab_data.color_change_backup[handle] = None
+                store(entity)
 
     @staticmethod
     def apply_color_to_all_entities(tab_data, color_index, rgb_value, preserve_text=False):
@@ -87,35 +87,37 @@ class ColorManager:
         if not tab_data.dxf_doc or not tab_data.color_change_backup:
             return
 
+        def restore(entity):
+            if not hasattr(entity.dxf, 'handle'):
+                return
+            handle = entity.dxf.handle
+            if handle not in tab_data.color_change_backup:
+                return
+            original_color, original_true_color = tab_data.color_change_backup[handle]
+
+            # Restore the ACI color (or BYLAYER if it had none).
+            if original_color is not None:
+                entity.dxf.color = original_color
+            elif hasattr(entity.dxf, 'color'):
+                try:
+                    entity.dxf.color = 256  # BYLAYER
+                except Exception:
+                    pass
+
+            # Restore or clear true_color (it takes precedence over the ACI color).
+            if original_true_color is not None:
+                entity.dxf.true_color = original_true_color
+            else:
+                try:
+                    delattr(entity.dxf, 'true_color')
+                except (AttributeError, KeyError):
+                    pass
+
         # Restore colors for modelspace entities
-        msp = tab_data.dxf_doc.modelspace()
-        for entity in msp:
-            if hasattr(entity.dxf, 'handle'):
-                handle = entity.dxf.handle
-                if handle in tab_data.color_change_backup:
-                    original_color = tab_data.color_change_backup[handle]
-                    if original_color is not None:
-                        entity.dxf.color = original_color
-                    else:
-                        # Entity didn't have color, set to BYLAYER
-                        if hasattr(entity.dxf, 'color'):
-                            try:
-                                entity.dxf.color = 256  # BYLAYER
-                            except:
-                                pass
+        for entity in tab_data.dxf_doc.modelspace():
+            restore(entity)
 
         # Restore colors for block entities
         for block in tab_data.dxf_doc.blocks:
             for entity in block:
-                if hasattr(entity.dxf, 'handle'):
-                    handle = entity.dxf.handle
-                    if handle in tab_data.color_change_backup:
-                        original_color = tab_data.color_change_backup[handle]
-                        if original_color is not None:
-                            entity.dxf.color = original_color
-                        else:
-                            if hasattr(entity.dxf, 'color'):
-                                try:
-                                    entity.dxf.color = 256  # BYLAYER
-                                except:
-                                    pass
+                restore(entity)
