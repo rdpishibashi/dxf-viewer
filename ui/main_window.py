@@ -899,12 +899,25 @@ class DXFViewerApp(QMainWindow):
         """Refresh the CAD viewer with updated colors"""
         if tab_data.cad_viewer and tab_data.dxf_doc and tab_data.msp:
             try:
-                # Audit the document and re-set to refresh the display
+                # Store current view transform
+                graphics_view = tab_data.cad_viewer.graphics_view
+                if graphics_view:
+                    old_transform = graphics_view.transform()
+                    old_center = graphics_view.mapToScene(graphics_view.viewport().rect().center())
+
+                # Clear the current scene
+                if hasattr(tab_data.cad_viewer, 'clear_scene'):
+                    tab_data.cad_viewer.clear_scene()
+
+                # Re-audit and reload the document completely
                 auditor = tab_data.dxf_doc.audit()
                 tab_data.cad_viewer.set_document(tab_data.dxf_doc, auditor)
-                if hasattr(tab_data.cad_viewer, 'zoom_extents'):
-                    # Optionally maintain current zoom level instead of zoom_extents
-                    pass  # We could store and restore view state here
+
+                # Restore view transform
+                if graphics_view and old_transform is not None:
+                    graphics_view.setTransform(old_transform)
+                    graphics_view.centerOn(old_center)
+
             except Exception as e:
                 print(f"Error refreshing viewer: {e}")
     

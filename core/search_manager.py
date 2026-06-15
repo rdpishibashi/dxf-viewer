@@ -142,21 +142,19 @@ class SearchManager:
         for entity in msp:
             if hasattr(entity.dxf, 'handle'):
                 handle = entity.dxf.handle
-                # Store color if it exists, or None to indicate BYLAYER
-                if hasattr(entity.dxf, 'color'):
-                    tab_data.original_entity_colors[handle] = entity.dxf.color
-                else:
-                    tab_data.original_entity_colors[handle] = None
+                # Store both color and true_color
+                color = entity.dxf.color if hasattr(entity.dxf, 'color') else None
+                true_color = entity.dxf.true_color if hasattr(entity.dxf, 'true_color') else None
+                tab_data.original_entity_colors[handle] = (color, true_color)
 
         # Store colors for block entities
         for block in tab_data.dxf_doc.blocks:
             for entity in block:
                 if hasattr(entity.dxf, 'handle'):
                     handle = entity.dxf.handle
-                    if hasattr(entity.dxf, 'color'):
-                        tab_data.original_entity_colors[handle] = entity.dxf.color
-                    else:
-                        tab_data.original_entity_colors[handle] = None
+                    color = entity.dxf.color if hasattr(entity.dxf, 'color') else None
+                    true_color = entity.dxf.true_color if hasattr(entity.dxf, 'true_color') else None
+                    tab_data.original_entity_colors[handle] = (color, true_color)
 
     @staticmethod
     def apply_search_highlighting(tab_data):
@@ -224,18 +222,28 @@ class SearchManager:
             if hasattr(entity.dxf, 'handle'):
                 handle = entity.dxf.handle
                 if handle in tab_data.original_entity_colors:
-                    original_color = tab_data.original_entity_colors[handle]
+                    original_color, original_true_color = tab_data.original_entity_colors[handle]
+
+                    # Restore color attribute
                     if original_color is not None:
-                        # Entity had a color, restore it
                         entity.dxf.color = original_color
                     else:
                         # Entity didn't have a color attribute (was BYLAYER)
-                        # Remove the color attribute if possible, or set to 256 (BYLAYER)
                         if hasattr(entity.dxf, 'color'):
                             try:
                                 entity.dxf.color = 256  # 256 = BYLAYER
                             except:
-                                pass  # Some entities may not support color changes
+                                pass
+
+                    # Restore or clear true_color attribute
+                    if original_true_color is not None:
+                        entity.dxf.true_color = original_true_color
+                    else:
+                        # Remove true_color if it wasn't originally set
+                        try:
+                            delattr(entity.dxf, 'true_color')
+                        except (AttributeError, KeyError):
+                            pass
 
         # Restore colors for block entities
         for block in tab_data.dxf_doc.blocks:
@@ -243,7 +251,9 @@ class SearchManager:
                 if hasattr(entity.dxf, 'handle'):
                     handle = entity.dxf.handle
                     if handle in tab_data.original_entity_colors:
-                        original_color = tab_data.original_entity_colors[handle]
+                        original_color, original_true_color = tab_data.original_entity_colors[handle]
+
+                        # Restore color attribute
                         if original_color is not None:
                             entity.dxf.color = original_color
                         else:
@@ -252,6 +262,16 @@ class SearchManager:
                                     entity.dxf.color = 256  # 256 = BYLAYER
                                 except:
                                     pass
+
+                        # Restore or clear true_color attribute
+                        if original_true_color is not None:
+                            entity.dxf.true_color = original_true_color
+                        else:
+                            # Remove true_color if it wasn't originally set
+                            try:
+                                delattr(entity.dxf, 'true_color')
+                            except (AttributeError, KeyError):
+                                pass
 
         # Clear stored colors
         tab_data.original_entity_colors.clear()
