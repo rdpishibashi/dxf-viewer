@@ -183,7 +183,7 @@ Collapse a drawing's many source layers (ULVAC exports contain dozens of
 - **Imported**: every other entity
 
 ## Access
-- Menu → Tools → Consolidate Layers (Boundaries/Imported)
+- Toolbar → Consolidate Layers (or Menu → Tools → Consolidate Layers)
 
 ## How It Works
 1. Runs (cached) region detection to find the rectangular regions.

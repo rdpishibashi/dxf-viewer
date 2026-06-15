@@ -80,6 +80,16 @@ python dxf_viewer.py drawing1 drawing2.dxf
 
 ## 主要機能の実装
 
+### ツールバー（全機能のボタン化）
+
+**方針: すべての機能をツールバーのボタンから操作可能にする。** `create_toolbar()` は
+Open / Info / Export / Search / Clear Search / Find Next / Find Previous /
+Search Boundary / Clear Boundary Highlight / Change Colors / Restore Colors /
+Consolidate Layers / Background のボタンを配置する。検索ナビ・境界検索・レイヤー統合は
+メニュー用 `QAction` を**再利用**してツールバーに追加しており（同一アクションを menu と
+toolbar の両方に add）、有効/無効状態は自動で連動する（重複した状態管理コードは持たない）。
+メニューバーは併存（キーボードショートカットと項目の探索性のため）。
+
 ### マルチタブ
 
 - `QTabWidget` + `DXFTab` データクラスで管理
@@ -118,7 +128,8 @@ python dxf_viewer.py drawing1 drawing2.dxf
 - **永続ハイライト**: ダイアログの「Keep boundary highlight after Clear Search」が ON の場合、
   Clear Search で dim を戻した後も境界オーバーレイを残す。残した輪郭は
   `Search > Clear Boundary Highlight` で消去する。
-- **メニュー**: `Search > Search Boundary...`（Ctrl+B）、`Search > Clear Boundary Highlight`。
+- **操作**: ツールバーの「Search Boundary...」「Clear Boundary Highlight」ボタン
+  （`Search` メニューにも同項目あり。Ctrl+B でも起動）。
 - **状態（`DXFTab`）**: `region_analysis`・`matched_regions`・`boundary_overlay_items`・
   `boundary_search_active`・`boundary_keep_highlight`。
 - 回帰テスト: `tests/regression/test_region_search.py`（検出枠数・領域数・名称マッチ件数）。
@@ -126,7 +137,7 @@ python dxf_viewer.py drawing1 drawing2.dxf
 ### レイヤー統合 / Consolidate Layers（`core/layer_consolidator.py`）
 
 入力 DXF に多数存在する `NoLayerName_xxx` などのレイヤーを、英語名の **2 レイヤー**へ
-統合する。`Tools > Consolidate Layers (Boundaries/Imported)`。
+統合する。`Tools > Consolidate Layers`（ツールバーの「Consolidate Layers」ボタンからも実行可）。
 
 - **Boundaries**: 検出された全矩形領域（`analyze_dxf_regions` の `regions`）の境界線。
   modelspace の LINE で、領域線種（lineweight=25 / color=2）かつ**領域ポリゴンの辺上に

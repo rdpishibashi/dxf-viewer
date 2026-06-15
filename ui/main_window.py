@@ -215,8 +215,10 @@ class DXFViewerApp(QMainWindow):
         tools_menu.addSeparator()
 
         # Consolidate Layers (Boundaries / Imported)
-        self.consolidate_layers_action = QAction('Consolidate Layers (Boundaries/Imported)', self)
+        self.consolidate_layers_action = QAction('Consolidate Layers', self)
         self.consolidate_layers_action.setFont(menu_font)
+        self.consolidate_layers_action.setToolTip(
+            'Consolidate all layers into Boundaries and Imported')
         self.consolidate_layers_action.triggered.connect(self.consolidate_layers)
         self.consolidate_layers_action.setEnabled(False)
         tools_menu.addAction(self.consolidate_layers_action)
@@ -264,6 +266,7 @@ class DXFViewerApp(QMainWindow):
         self.search_boundary_action = QAction('Search Boundary...', self)
         self.search_boundary_action.setShortcut(QKeySequence('Ctrl+B'))
         self.search_boundary_action.setFont(menu_font)
+        self.search_boundary_action.setToolTip('Search rectangular regions by name (Ctrl+B)')
         self.search_boundary_action.triggered.connect(self.search_boundary)
         self.search_boundary_action.setEnabled(False)
         search_menu.addAction(self.search_boundary_action)
@@ -271,6 +274,7 @@ class DXFViewerApp(QMainWindow):
         # Clear Boundary Highlight (removes persisted region overlays)
         self.clear_boundary_highlight_action = QAction('Clear Boundary Highlight', self)
         self.clear_boundary_highlight_action.setFont(menu_font)
+        self.clear_boundary_highlight_action.setToolTip('Remove persisted region boundary highlights')
         self.clear_boundary_highlight_action.triggered.connect(self.clear_boundary_highlight)
         self.clear_boundary_highlight_action.setEnabled(False)
         search_menu.addAction(self.clear_boundary_highlight_action)
@@ -324,9 +328,21 @@ class DXFViewerApp(QMainWindow):
         self.toolbar_clear_search_action.triggered.connect(self.clear_search)
         self.toolbar_clear_search_action.setEnabled(False)
         toolbar.addAction(self.toolbar_clear_search_action)
-        
+
+        # Search navigation — reuse the menu actions (shared enabled state)
+        for action in (self.find_next_action, self.find_prev_action):
+            action.setFont(toolbar_font)
+            toolbar.addAction(action)
+
         toolbar.addSeparator()
-        
+
+        # Boundary search — reuse the menu actions (shared enabled state)
+        for action in (self.search_boundary_action, self.clear_boundary_highlight_action):
+            action.setFont(toolbar_font)
+            toolbar.addAction(action)
+
+        toolbar.addSeparator()
+
         # Change Colors
         self.toolbar_change_colors_action = QAction('Change Colors', self)
         self.toolbar_change_colors_action.setFont(toolbar_font)
@@ -340,6 +356,10 @@ class DXFViewerApp(QMainWindow):
         self.toolbar_restore_colors_action.triggered.connect(self.restore_all_colors)
         self.toolbar_restore_colors_action.setEnabled(False)
         toolbar.addAction(self.toolbar_restore_colors_action)
+
+        # Consolidate Layers — reuse the menu action (shared enabled state)
+        self.consolidate_layers_action.setFont(toolbar_font)
+        toolbar.addAction(self.consolidate_layers_action)
 
         toolbar.addSeparator()
 
