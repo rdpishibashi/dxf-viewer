@@ -334,3 +334,7 @@ Tools → Change All Entity Colors... → Select "Gray"
   all source layers into `Boundaries` (detected region edges) and `Imported`
   (`core/layer_consolidator.py`). Non-destructive; reopen to restore. Regression
   test at `tests/regression/test_layer_consolidation.py`.
+- 2026-06-15: Fixed Restore Colors not returning to the import colors —
+  `ColorManager` now backs up and restores `true_color` as well as the ACI color
+  (true_color takes precedence when rendering, so leaving it set kept the
+  changed color).
