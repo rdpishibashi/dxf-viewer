@@ -80,15 +80,19 @@ python dxf_viewer.py drawing1 drawing2.dxf
 
 ## 主要機能の実装
 
-### ツールバー（全機能のボタン化）
+### ツールバー（全機能のボタン化・2段）
 
 **方針: すべての機能をツールバーのボタンから操作可能にする。** `create_toolbar()` は
-Open / Info / Export / Search / Clear Search / Find Next / Find Previous /
-Search Boundary / Clear Boundary Highlight / Change Colors / Restore Colors /
-Consolidate Layers / Background のボタンを配置する。検索ナビ・境界検索・レイヤー統合は
-メニュー用 `QAction` を**再利用**してツールバーに追加しており（同一アクションを menu と
-toolbar の両方に add）、有効/無効状態は自動で連動する（重複した状態管理コードは持たない）。
-メニューバーは併存（キーボードショートカットと項目の探索性のため）。
+`addToolBarBreak()` で**2段**に分け、以下を配置する。
+
+- **1段目**: Open / Info / Export / Search / Clear Search / Find Next / Find Previous /
+  Search Boundary / Clear Boundary Highlight
+- **2段目**: Change Colors / Restore Colors / Background Color / Consolidate Layers
+
+検索ナビ・境界検索・レイヤー統合はメニュー用 `QAction` を**再利用**してツールバーに
+追加しており（同一アクションを menu と toolbar の両方に add）、有効/無効状態は自動で
+連動する（重複した状態管理コードは持たない）。メニューバーは併存（キーボード
+ショートカットと項目の探索性のため）。
 
 ### マルチタブ
 

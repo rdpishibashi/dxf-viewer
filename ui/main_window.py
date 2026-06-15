@@ -341,34 +341,40 @@ class DXFViewerApp(QMainWindow):
             action.setFont(toolbar_font)
             toolbar.addAction(action)
 
-        toolbar.addSeparator()
+        # --- Second toolbar row: Change Colors onward ---
+        self.addToolBarBreak()
+        toolbar2 = QToolBar()
+        toolbar2.setFont(toolbar_font)
+        self.addToolBar(toolbar2)
 
         # Change Colors
         self.toolbar_change_colors_action = QAction('Change Colors', self)
         self.toolbar_change_colors_action.setFont(toolbar_font)
         self.toolbar_change_colors_action.triggered.connect(self.change_all_colors)
         self.toolbar_change_colors_action.setEnabled(False)
-        toolbar.addAction(self.toolbar_change_colors_action)
+        toolbar2.addAction(self.toolbar_change_colors_action)
         
         # Restore Colors
         self.toolbar_restore_colors_action = QAction('Restore Colors', self)
         self.toolbar_restore_colors_action.setFont(toolbar_font)
         self.toolbar_restore_colors_action.triggered.connect(self.restore_all_colors)
         self.toolbar_restore_colors_action.setEnabled(False)
-        toolbar.addAction(self.toolbar_restore_colors_action)
+        toolbar2.addAction(self.toolbar_restore_colors_action)
 
-        # Consolidate Layers — reuse the menu action (shared enabled state)
-        self.consolidate_layers_action.setFont(toolbar_font)
-        toolbar.addAction(self.consolidate_layers_action)
-
-        toolbar.addSeparator()
+        toolbar2.addSeparator()
 
         # Background Color
-        self.toolbar_background_color_action = QAction('Background', self)
+        self.toolbar_background_color_action = QAction('Background Color', self)
         self.toolbar_background_color_action.setFont(toolbar_font)
         self.toolbar_background_color_action.triggered.connect(self.change_background_color)
         self.toolbar_background_color_action.setEnabled(False)
-        toolbar.addAction(self.toolbar_background_color_action)
+        toolbar2.addAction(self.toolbar_background_color_action)
+
+        toolbar2.addSeparator()
+
+        # Consolidate Layers (last) — reuse the menu action (shared enabled state)
+        self.consolidate_layers_action.setFont(toolbar_font)
+        toolbar2.addAction(self.consolidate_layers_action)
     
     def create_status_bar(self):
         """ステータスバーを作成"""
