@@ -16,6 +16,7 @@ from core.tab_manager import DXFTab
 from core.color_manager import ColorManager
 from core.search_manager import SearchManager
 from core.region_search_manager import RegionSearchManager
+from core.layer_consolidator import consolidate_layers as consolidate_doc_layers
 from ui.dialogs import (
     BackgroundColorDialog, ColorChangeDialog, TextSearchDialog,
     BoundarySearchDialog, FileInfoDialog, ExportImageDialog
@@ -210,6 +211,15 @@ class DXFViewerApp(QMainWindow):
         self.background_color_action.triggered.connect(self.change_background_color)
         self.background_color_action.setEnabled(False)
         tools_menu.addAction(self.background_color_action)
+
+        tools_menu.addSeparator()
+
+        # Consolidate Layers (Boundaries / Imported)
+        self.consolidate_layers_action = QAction('Consolidate Layers (Boundaries/Imported)', self)
+        self.consolidate_layers_action.setFont(menu_font)
+        self.consolidate_layers_action.triggered.connect(self.consolidate_layers)
+        self.consolidate_layers_action.setEnabled(False)
+        tools_menu.addAction(self.consolidate_layers_action)
 
         # Searchメニュー
         search_menu = menubar.addMenu('Search')
@@ -474,6 +484,7 @@ class DXFViewerApp(QMainWindow):
         self.search_action.setEnabled(file_loaded)
         self.toolbar_search_action.setEnabled(file_loaded)
         self.search_boundary_action.setEnabled(file_loaded)
+        self.consolidate_layers_action.setEnabled(file_loaded)
         self.change_colors_action.setEnabled(file_loaded)
         self.toolbar_change_colors_action.setEnabled(file_loaded)
         self.background_color_action.setEnabled(file_loaded)
@@ -882,6 +893,61 @@ class DXFViewerApp(QMainWindow):
         rect = QRectF(min(xs) - margin, min(ys) - margin,
                       width + 2 * margin, height + 2 * margin)
         graphics_view.fitInView(rect, Qt.KeepAspectRatio)
+
+    # ------------------------------------------------------------------
+    # Layer consolidation
+    # ------------------------------------------------------------------
+    def consolidate_layers(self):
+        """Collapse all source layers into 'Boundaries' and 'Imported'.
+
+        'Boundaries' receives the boundary linework of the detected rectangular
+        regions; everything else goes to 'Imported'. The change is in-memory
+        only — reopening the file restores the original layers.
+        """
+        current_tab = self.get_current_tab()
+        if not current_tab or not hasattr(current_tab, 'tab_data'):
+            return
+
+        tab_data = current_tab.tab_data
+        if not tab_data.dxf_doc:
+            QMessageBox.warning(self, "No File", "No DXF file is currently loaded.")
+            return
+
+        # Clear active search/highlight first — we are about to rewrite layers.
+        if tab_data.search_active or tab_data.boundary_search_active:
+            self.clear_search()
+        self.clear_boundary_highlight()
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        analysis = None
+        stats = None
+        try:
+            analysis = RegionSearchManager.get_analysis(tab_data)
+            if analysis and not analysis.get('error'):
+                stats = consolidate_doc_layers(tab_data.dxf_doc, analysis['regions'])
+                tab_data.msp = tab_data.dxf_doc.modelspace()
+                # Original colors no longer correspond to the rewritten layers.
+                tab_data.original_entity_colors.clear()
+                self.refresh_viewer(tab_data)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        if not analysis or analysis.get('error'):
+            message = (analysis or {}).get('error') or "Region analysis failed."
+            QMessageBox.information(self, "Consolidate Layers", message)
+            self.status_bar.showMessage("No regions detected")
+            return
+
+        QMessageBox.information(
+            self, "Consolidate Layers",
+            "Consolidated into 2 layers:\n"
+            f"  Boundaries: {stats['boundaries']} entities\n"
+            f"  Imported: {stats['imported']} entities\n"
+            f"Removed {len(stats['removed'])} source layer(s).\n\n"
+            "Reopen the file to restore the original layers.")
+        self.status_bar.showMessage(
+            f"Consolidated layers — Boundaries: {stats['boundaries']}, "
+            f"Imported: {stats['imported']}")
 
     def find_text_entities(self, doc, search_text, case_sensitive=False, whole_word=False):
         """Find all text entities matching search criteria"""
