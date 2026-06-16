@@ -32,7 +32,7 @@ DXF-viewer/
     ├── file_utils.py       # ファイル検証・パス処理
     ├── app_utils.py        # アプリケーション初期化・シグナル定義
     ├── text_utils.py       # MTEXT/TEXT 書式コード除去（検索一致用・plain_mtext）
-    └── export_utils.py     # エクスポート機能（旧版）
+    ├── export_utils.py     # エクスポート機能（旧版・後方互換のため残存）
     └── export_utils_v2.py  # エクスポート機能（新版・matplotlib 使用）
 ```
 
@@ -159,19 +159,30 @@ DXF-viewer 独自のツールバー／メニューで代替できる。
   閉領域を列挙し、下端横エッジ近傍のラベルから名称候補を付与する。DXF-extract-labels の
   同名モジュールを移植したもの（依存関数のみ自己完結化、アルゴリズム本体は同一）。
   設定は `DEFAULT_REGION_CONFIG`（DXF-extract-labels のデフォルト値）。
-  - **図面枠検出**: `detect_drawing_frames()` は lineweight=100 の縦線分を `_merge_collinear`
-    （bridge=False: 接触/重複のみ結合、隙間は橋渡しせず）で統合してから高さ判定する。
-    枠縦辺が分割されているケース（EE6888-631-01A.dxf: 右辺が y=367.5 で2分割）でも接触結合
-    だけで高さ 400 を確保できる。bridge=True にすると無関係セグメントが連結されて余分なフレームが生じる。
-  - **LWPOLYLINE 境界への対応と LINE 優先フォールバック**: 境界線が LWPOLYLINE で描かれた
-    図面（EE6888-631-01A.dxf など）と LINE で描かれた図面（EE6888-602-01A.dxf）が混在する。
-    `_collect_region_geometry()` は LINE と LWPOLYLINE の境界線を別リストに収集し、
-    `analyze_dxf_regions()` は **LINE のみ** で閾値超え候補が見つかった場合はそのまま採用、
-    ゼロの場合のみ LINE+LWPOLYLINE で再検出する。この 2 パス戦略により:
-    - LINE 優先で十分な場合（EE6888-602-01A.dxf: 298 LINE）: 小部品 LWPOLYLINE の水平辺が
-      縦境界線の corner-partner 判定を誤らせ gap-bridging を妨げる問題を回避できる。
-    - LINE だけでは成立しない場合（EE6888-631-01A.dxf: LINE 10 本のみ）: LWPOLYLINE を
-      追加して再検出する。
+
+  **図面枠検出 (`detect_drawing_frames`)**
+
+  lineweight=100 の縦線分を `_merge_collinear(bridge=False)` で統合（接触/重複のみ結合、
+  隙間は橋渡しせず）してから高さ判定する。`bridge=False` にしている理由: 枠縦辺が
+  接触点で分割されているケース（例: EE6888-631-01A.dxf 右辺が y=367.5 で2分割）は
+  接触結合だけで高さ 400 が確保できる。`bridge=True` にすると無関係セグメントが
+  橋渡しされ余分なフレームが生じる（EE6868-500-01C.dxf で 13→19 フレームの退行が
+  確認されたため False に戻した）。
+
+  **LWPOLYLINE 境界対応 — LINE 優先 2 パス検出**
+
+  境界線を LINE で描く図面（例: EE6888-602-01A.dxf）と LWPOLYLINE で描く図面
+  （例: EE6888-631-01A.dxf）が混在するため、2 パス戦略を採用する。
+
+  `_collect_region_geometry()` は LINE 由来と LWPOLYLINE 由来の境界線を別リストに収集し、
+  `analyze_dxf_regions()` は次の順で検出する:
+  1. **LINE のみ**で検出 → 閾値超え候補が 1 件以上あればその結果を採用して終了。
+  2. 候補ゼロかつ LWPOLYLINE 境界線がある場合 → **LINE+LWPOLYLINE** で再検出。
+
+  この順序が必要な理由: EE6888-602-01A.dxf では小部品（コネクタ端子 9×15 等）が
+  LWPOLYLINE/lw=25/color=2 で描かれており、これを境界線に混ぜると水平辺が縦境界線の
+  corner-partner 判定を誤らせ gap-bridging を妨げる。LINE 優先で十分な図面では
+  LWPOLYLINE を混入しないことで、この干渉を回避する。
 - **マッチ**: `RegionSearchManager.find_matching_regions()` が入力名称を各領域の
   `default_name`＋`name_candidates` と照合（case sensitive / whole word 対応）。
 - **キャッシュ**: `RegionSearchManager.get_analysis()` が解析結果を `DXFTab.region_analysis`
@@ -197,8 +208,9 @@ DXF-viewer 独自のツールバー／メニューで代替できる。
 統合する。`Tools > Consolidate Layers`（ツールバーの「Consolidate Layers」ボタンからも実行可）。
 
 - **Boundaries**: 検出された全矩形領域（`analyze_dxf_regions` の `regions`）の境界線。
-  modelspace の LINE で、領域線種（lineweight=25 / color=2）かつ**領域ポリゴンの辺上に
-  乗る**ものを幾何判定（`_line_on_edges`、エッジは最大区間に併合）。
+  modelspace の **LINE** で、領域線種（lineweight=25 / color=2）かつ**領域ポリゴンの辺上に
+  乗る**ものを幾何判定（`_is_region_boundary_line` → `_line_on_edges`、エッジは最大区間に
+  併合）。
 - **Imported**: それ以外のすべてのエンティティ（block 定義・paperspace 含む）。
   block 内のエンティティは block 共有のため幾何分類せず一律 Imported。
 - 統合後、未使用になった元レイヤーをレイヤーテーブルから削除（`0`・`Defpoints`・
@@ -206,8 +218,14 @@ DXF-viewer 独自のツールバー／メニューで代替できる。
 - **非破壊**: メモリ上の doc のみ変更。ファイルは無変更で、**再オープンで元のレイヤーに復元**。
   ビューアのレイヤーパネルと画像エクスポートに反映される。
 - 解析はキャッシュ（`RegionSearchManager.get_analysis`）を再利用、ビジーカーソル表示。
-- 制限: 領域境界線が block 内にある場合は Boundaries に含まれない（実サンプル EE6868 は
-  全 23 領域の周が modelspace 線で捕捉、EE6888 も周は捕捉済み）。
+- **制限**:
+  - 領域境界線が block 内にある場合は Boundaries に含まれない。
+  - `_is_region_boundary_line` は LINE エンティティのみ判定する。LWPOLYLINE で描かれた
+    境界線（例: EE6888-631-01A.dxf）は LINE ではないため、領域ポリゴンの辺に一致しても
+    Boundaries にならず Imported に分類される。Search Boundary の検出自体は 2 パス戦略で
+    正しく動作するが、レイヤー統合での分類が期待どおりにならない点は既知の制限。
+  - 実サンプル EE6868-500-01C.dxf は全 23 領域の境界が modelspace の LINE で描かれており
+    完全捕捉。EE6888-602-01A.dxf も LINE 境界で完全捕捉。
 - 回帰テスト: `tests/regression/test_layer_consolidation.py`（残存レイヤー・周の被覆・本数）。
 
 ### 色変更（`core/color_manager.py`）
@@ -261,4 +279,4 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-06-17（LWPOLYLINE ホバーブロック修正 + Search Boundary の図面枠検出・LWPOLYLINE 境界対応 / LINE 優先フォールバック追加）*
+*最終更新: 2026-06-17（LWPOLYLINE ホバーブロック修正 + Search Boundary の図面枠検出・LWPOLYLINE 境界 LINE 優先 2 パス対応 + Consolidate Layers LWPOLYLINE 制限を明記）*
