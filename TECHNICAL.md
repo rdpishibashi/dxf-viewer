@@ -159,6 +159,19 @@ DXF-viewer 独自のツールバー／メニューで代替できる。
   閉領域を列挙し、下端横エッジ近傍のラベルから名称候補を付与する。DXF-extract-labels の
   同名モジュールを移植したもの（依存関数のみ自己完結化、アルゴリズム本体は同一）。
   設定は `DEFAULT_REGION_CONFIG`（DXF-extract-labels のデフォルト値）。
+  - **図面枠検出**: `detect_drawing_frames()` は lineweight=100 の縦線分を `_merge_collinear`
+    （bridge=False: 接触/重複のみ結合、隙間は橋渡しせず）で統合してから高さ判定する。
+    枠縦辺が分割されているケース（EE6888-631-01A.dxf: 右辺が y=367.5 で2分割）でも接触結合
+    だけで高さ 400 を確保できる。bridge=True にすると無関係セグメントが連結されて余分なフレームが生じる。
+  - **LWPOLYLINE 境界への対応と LINE 優先フォールバック**: 境界線が LWPOLYLINE で描かれた
+    図面（EE6888-631-01A.dxf など）と LINE で描かれた図面（EE6888-602-01A.dxf）が混在する。
+    `_collect_region_geometry()` は LINE と LWPOLYLINE の境界線を別リストに収集し、
+    `analyze_dxf_regions()` は **LINE のみ** で閾値超え候補が見つかった場合はそのまま採用、
+    ゼロの場合のみ LINE+LWPOLYLINE で再検出する。この 2 パス戦略により:
+    - LINE 優先で十分な場合（EE6888-602-01A.dxf: 298 LINE）: 小部品 LWPOLYLINE の水平辺が
+      縦境界線の corner-partner 判定を誤らせ gap-bridging を妨げる問題を回避できる。
+    - LINE だけでは成立しない場合（EE6888-631-01A.dxf: LINE 10 本のみ）: LWPOLYLINE を
+      追加して再検出する。
 - **マッチ**: `RegionSearchManager.find_matching_regions()` が入力名称を各領域の
   `default_name`＋`name_candidates` と照合（case sensitive / whole word 対応）。
 - **キャッシュ**: `RegionSearchManager.get_analysis()` が解析結果を `DXFTab.region_analysis`
@@ -248,4 +261,4 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-06-17（LWPOLYLINE 閉パスがホバー検出をブロックする問題を修正。_ClickThroughPathItem / _ClickThroughBackend を追加）*
+*最終更新: 2026-06-17（LWPOLYLINE ホバーブロック修正 + Search Boundary の図面枠検出・LWPOLYLINE 境界対応 / LINE 優先フォールバック追加）*
