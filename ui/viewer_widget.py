@@ -1,9 +1,48 @@
 """Custom CAD viewer widget with enhanced functionality."""
 
 from ezdxf.addons.drawing.qtviewer import CADViewer
+from ezdxf.addons.drawing.pyqt import PyQtBackend
+from ezdxf.npshapes import to_qpainter_path
 from PyQt5.QtCore import Qt, QEvent
-from PyQt5.QtWidgets import QGraphicsView
-from PyQt5.QtGui import QBrush, QColor
+from PyQt5.QtWidgets import QGraphicsView, QGraphicsPathItem
+from PyQt5.QtGui import QBrush, QColor, QPainterPathStroker
+
+
+class _ClickThroughPathItem(QGraphicsPathItem):
+    """QGraphicsPathItem with outline-only hit area.
+
+    Qt's qt_graphicsItem_shapeFromPath() calls addPath(path) on the stroked
+    outline, so a closed QPainterPath's interior becomes part of the hit area
+    and blocks hover/click detection of entities drawn underneath (e.g. entities
+    inside a closed LWPOLYLINE).  Overriding shape() to return only the stroked
+    outline makes the enclosed interior transparent to mouse events.
+    """
+
+    _HIT_WIDTH = 3.0  # scene units — narrow band along the outline
+
+    def shape(self):
+        stroker = QPainterPathStroker()
+        stroker.setWidth(self._HIT_WIDTH)
+        return stroker.createStroke(self.path())
+
+
+class _ClickThroughBackend(PyQtBackend):
+    """PyQtBackend that renders path entities with outline-only hit areas.
+
+    Closed LWPOLYLINE entities go through draw_path().  With the default
+    QGraphicsPathItem, a closed path's interior is included in shape(), so
+    the LWPOLYLINE blocks hover detection of entities drawn inside it.
+    Using _ClickThroughPathItem here makes the closed-path interior
+    transparent to mouse events while keeping the outline selectable.
+    """
+
+    def draw_path(self, path, properties):
+        if len(path) == 0:
+            return
+        item = _ClickThroughPathItem(to_qpainter_path([path]))
+        item.setPen(self._get_pen(properties))
+        item.setBrush(self._no_fill)
+        self._add_item(item, properties.handle)
 
 
 class PinchZoomCADViewer(CADViewer):
@@ -17,6 +56,11 @@ class PinchZoomCADViewer(CADViewer):
         self.menuBar().setNativeMenuBar(False)
         self.menuBar().hide()
 
+        # Replace PyQtBackend with _ClickThroughBackend so that closed path
+        # entities (LWPOLYLINE etc.) do not block hover detection of entities
+        # inside them.
+        self._install_click_through_backend()
+
         # Enable pinch gesture only
         self.grabGesture(Qt.PinchGesture)
 
@@ -26,6 +70,21 @@ class PinchZoomCADViewer(CADViewer):
         # Set default background color to black
         if self.graphics_view:
             self.set_background_color(QColor(0, 0, 0))
+
+    def _install_click_through_backend(self):
+        """Inject _ClickThroughBackend into the CADWidget.
+
+        CADWidget._reset_backend() is called from set_document() each time a
+        DXF file is (re)loaded.  Monkey-patching that method ensures every
+        load uses our custom backend instead of the default PyQtBackend.
+        """
+        cad = self._cad
+
+        def _reset_backend():
+            cad._backend = _ClickThroughBackend()
+
+        cad._reset_backend = _reset_backend
+        cad._reset_backend()  # replace the already-created instance immediately
 
     def _find_graphics_view(self):
         """Find the QGraphicsView within the CADViewer widget tree."""
