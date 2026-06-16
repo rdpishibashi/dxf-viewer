@@ -44,6 +44,29 @@ EXPECTED = {
             ('nonexist', False, False): 0,
         },
     },
+    # EE6888-631-01A / EE6492-631-02A: boundaries drawn as LWPOLYLINE (not LINE).
+    # Frame detection uses _merge_collinear(bridge=False) to join split frame sides.
+    # Region detection uses LINE-first 2-pass with LWPOLYLINE fallback (2026-06-17).
+    'EE6888-631-01A.dxf': {
+        'frames': 1,
+        'min_regions': 4,
+        'queries': {
+            # 'SYSTEM' matches 4: 2 regions named 'SYSTEM I/F BOX' + 2 'SB-1A' regions
+            # that list 'SYSTEM I/F BOX' as a name candidate.
+            ('SYSTEM', False, False): 4,
+            ('SB-1A', False, False): 2,
+            ('nonexist', False, False): 0,
+        },
+    },
+    'EE6492-631-02A.dxf': {
+        'frames': 1,
+        'min_regions': 4,
+        'queries': {
+            ('SYSTEM', False, False): 4,
+            ('SB-1A', False, False): 2,
+            ('nonexist', False, False): 0,
+        },
+    },
 }
 
 
