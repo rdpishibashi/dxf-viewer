@@ -94,6 +94,26 @@ python dxf_viewer.py drawing1 drawing2.dxf
 連動する（重複した状態管理コードは持たない）。メニューバーは併存（キーボード
 ショートカットと項目の探索性のため）。
 
+### LWPOLYLINE 内側エンティティのホバー検出（`ui/viewer_widget.py`）
+
+Qt の `qt_graphicsItem_shapeFromPath()` は、stroked outline に `addPath(path)` を加えるため、
+**閉じた QPainterPath のヒット領域が内部エリア全体**を含む。閉じた LWPOLYLINE が
+`draw_path()` → `QGraphicsPathItem` に変換されると、その内側のエンティティが
+マウスホバーで拾えなくなる（LWPOLYLINE が最前面として捕捉される）。
+
+**修正（`_ClickThroughPathItem` + `_ClickThroughBackend`）:**
+- `_ClickThroughPathItem`（`QGraphicsPathItem` サブクラス）: `shape()` を outline のみに
+  限定（`QPainterPathStroker` で `_HIT_WIDTH=3.0` の帯を返す）
+- `_ClickThroughBackend`（`PyQtBackend` サブクラス）: `draw_path()` で
+  `_ClickThroughPathItem` を使用する
+- `PinchZoomCADViewer._install_click_through_backend()`: `CADWidget._reset_backend` を
+  monkey-patch して、ファイルロード・リフレッシュのたびに `_ClickThroughBackend` が
+  使われるよう注入する
+
+LWPOLYLINE の輪郭線上はホバー可能（`_HIT_WIDTH=3.0` の帯が hit area）、
+内側は click-through となり内部エンティティのホバーが機能する。
+`_OverlayPolygonItem` と同じ `shape()` オーバーライドパターン。
+
 ### ezdxf CADViewer メニューの非表示化
 
 `CADViewer`（ezdxf）は `QMainWindow` サブクラスであり、`__init__` で
@@ -228,4 +248,4 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-06-15（領域検索 / Boundary Search、レイヤー統合 / Consolidate Layers を追加。検索のテキスト正規化を ezdxf plain_mtext ベースへ移行。ezdxf CADViewer のメニューバーをグローバルメニューから非表示化）*
+*最終更新: 2026-06-17（LWPOLYLINE 閉パスがホバー検出をブロックする問題を修正。_ClickThroughPathItem / _ClickThroughBackend を追加）*
