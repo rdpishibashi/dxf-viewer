@@ -19,6 +19,7 @@ from core.tab_manager import DXFTab
 from core.color_manager import ColorManager
 from core.search_manager import SearchManager
 from core.region_search_manager import RegionSearchManager
+from core.region_detector import extract_text_from_entity
 from core.layer_consolidator import consolidate_layers as consolidate_doc_layers
 from ui.dialogs import (
     BackgroundColorDialog, ColorChangeDialog, TextSearchDialog,
@@ -832,6 +833,7 @@ class DXFViewerApp(QMainWindow):
 
         SearchManager.store_all_entity_colors(tab_data)
         self._dim_all_entities(tab_data)
+        self._highlight_matched_labels(tab_data, matched)
         self.refresh_viewer(tab_data)
         tab_data.boundary_overlay_items = []  # destroyed by the refresh above
         self.draw_boundary_overlays(tab_data, matched)
@@ -908,6 +910,44 @@ class DXFViewerApp(QMainWindow):
             if not block.name.startswith('*'):
                 for entity in block:
                     dim(entity)
+
+    def _highlight_matched_labels(self, tab_data, matched_regions):
+        """Color the label entity that produced each matched region name in red,
+        the same red used by the plain text search, so the matched string
+        stands out inside its (also red-outlined) region.
+
+        Matching is done by (cleaned text, position) against the coordinates
+        ``RegionSearchManager.find_matching_regions`` recorded for the matched
+        candidate. Only direct modelspace TEXT/MTEXT entities are addressable
+        this way: a label coming from an INSERT-expanded block is a virtual
+        copy with no independent on-screen identity (the real entity lives in
+        the block definition at block-local coordinates, shared by every
+        INSERT of that block), so it is left dimmed like plain text search
+        already does for block-sourced matches (see SearchManager).
+        """
+        targets = set()
+        for region in matched_regions:
+            for (text, x, y) in region.get('matched_labels', []):
+                targets.add((text, round(x, 3), round(y, 3)))
+        if not targets:
+            return
+
+        RED_COLOR_INDEX = 1
+        RED_RGB = 0xFF0000
+        for entity in tab_data.dxf_doc.modelspace():
+            if entity.dxftype() not in ('TEXT', 'MTEXT'):
+                continue
+            _, clean_text, (x, y) = extract_text_from_entity(entity)
+            if not clean_text:
+                continue
+            if (clean_text, round(x, 3), round(y, 3)) not in targets:
+                continue
+            if hasattr(entity.dxf, 'color'):
+                try:
+                    entity.dxf.color = RED_COLOR_INDEX
+                    entity.dxf.true_color = RED_RGB
+                except Exception:
+                    pass
 
     def draw_boundary_overlays(self, tab_data, regions):
         """Draw matched region outlines as overlay items on the CAD scene."""

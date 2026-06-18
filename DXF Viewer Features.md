@@ -144,6 +144,12 @@ matching boundaries. Complements the text search.
 ### 2. Visual Highlighting
 - Matching region boundaries are drawn as **red outlines** overlaid on the view
   (non-destructive — the DXF document is not recolored for the outline)
+- The matched name label itself (the text that matched your search) is also
+  recolored red, the same way plain text search highlights matches — so the
+  string you searched for stands out inside its red-outlined region. This only
+  works for labels placed directly in modelspace; labels coming from a shared
+  block (INSERT) keep the dimmed color, since recoloring them would affect
+  every other instance of that block (same limitation as plain text search)
 - All other entities are dimmed to the selected color
 - All matches are highlighted at once and the view zooms to fit them
 

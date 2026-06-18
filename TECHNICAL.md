@@ -213,13 +213,30 @@ DXF-viewer 独自のツールバー／メニューで代替できる。
   corner-partner 判定を誤らせ gap-bridging を妨げる。LINE 優先で十分な図面では
   LWPOLYLINE を混入しないことで、この干渉を回避する。
 - **マッチ**: `RegionSearchManager.find_matching_regions()` が入力名称を各領域の
-  `default_name`＋`name_candidates` と照合（case sensitive / whole word 対応）。
+  `name_candidates`（`default_name` は常にその先頭要素なので別チェック不要）と照合
+  （case sensitive / whole word 対応）。戻り値は `analysis['regions']` 各要素の浅いコピー
+  に `matched_labels: [(text, x, y), ...]`（マッチした候補テキストとその元ラベルの座標）
+  を追加したもの。座標は `region_detector.analyze_dxf_regions()` が各領域の
+  `name_candidate_positions`（`{候補テキスト: (x, y)}`）として併せて算出している
+  （`region_name_candidates()` 自体の戻り値は DXF-extract-labels と揃えるため変更せず、
+  `_label_position_for_candidate()` で同テキストのラベルからポリゴンに最も近いものを
+  逆引きする）。
 - **キャッシュ**: `RegionSearchManager.get_analysis()` が解析結果を `DXFTab.region_analysis`
   に保持。初回のみ実行（大ファイルで数秒、ビジーカーソル表示）、2 回目以降は即時。
   解析は**ディスク上のファイルを読む**ため、ビューア上の dim（色書換え）の影響を受けない。
-- **ハイライト（オーバーレイ方式）**: マッチ領域のポリゴンを QGraphicsItem の赤い輪郭線として
-  シーンに重ね描画（`DXFViewerApp.draw_boundary_overlays()`）。doc を書き換えないため
-  非破壊。非マッチ要素は既存の色書換え機構で dim。全マッチを一括表示し zoom-to-fit する。
+- **ハイライト（オーバーレイ方式 + ラベル本体の色書換え、2026-06-18 追加）**: マッチ領域の
+  ポリゴンを QGraphicsItem の赤い輪郭線としてシーンに重ね描画
+  （`DXFViewerApp.draw_boundary_overlays()`）。doc を書き換えないため非破壊。
+  加えて `_highlight_matched_labels()` が `matched_labels` の座標を使い、検索した文字列
+  そのもの（領域名のラベルエンティティ）も赤に色書換えする（プレーンテキスト検索の
+  `SearchManager.apply_search_highlighting()` と同じ赤＝color index 1 / true_color
+  0xFF0000）。`_dim_all_entities()` の直後・`refresh_viewer()` の前に呼ぶことで dim 後に
+  上書きする。**直接 modelspace に置かれた TEXT/MTEXT のみ**対象（クリーン済みテキスト＋
+  座標の一致で照合）。INSERT 展開で得たブロック内ラベルは、実体がブロック定義側に
+  ブロックローカル座標で存在し全 INSERT 参照で共有されるため、個別インスタンスだけを
+  色書換えできない（プレーンテキスト検索の `SearchManager.find_text_entities()` に既存の
+  同種の制限と同じ）。非マッチ要素（ラベル含む）は既存の色書換え機構で dim。全マッチを
+  一括表示し zoom-to-fit する。
 - **永続ハイライト**: ダイアログの「Keep boundary highlight after Clear Search」が ON の場合、
   Clear Search で dim を戻した後も境界オーバーレイを残す。残した輪郭は
   `Search > Clear Boundary Highlight` で消去する。検索がアクティブな状態（dim 中）で
@@ -229,7 +246,8 @@ DXF-viewer 独自のツールバー／メニューで代替できる。
   （`Search` メニューにも同項目あり。Ctrl+B でも起動）。
 - **状態（`DXFTab`）**: `region_analysis`・`matched_regions`・`boundary_overlay_items`・
   `boundary_search_active`・`boundary_keep_highlight`。
-- 回帰テスト: `tests/regression/test_region_search.py`（検出枠数・領域数・名称マッチ件数）。
+- 回帰テスト: `tests/regression/test_region_search.py`（検出枠数・領域数・名称マッチ件数・
+  `matched_labels` が実在の modelspace エンティティへ解決できること）。
 
 ### レイヤー統合 / Consolidate Layers（`core/layer_consolidator.py`）
 
@@ -308,4 +326,4 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-06-18（Search Boundary の90°回転図面対応を DXF-extract-labels から移植）*
+*最終更新: 2026-06-18（Search Boundary の90°回転図面対応を DXF-extract-labels から移植 + マッチしたラベル本体の色書換えハイライトを追加）*
