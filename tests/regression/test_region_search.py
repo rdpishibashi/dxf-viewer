@@ -67,6 +67,20 @@ EXPECTED = {
             ('nonexist', False, False): 0,
         },
     },
+    # 図面枠・領域境界線は通常向きだが、ラベル(MTEXT)の大半が90°回転して描かれている
+    # ファイル。名称ラベルが横エッジでなく縦エッジ脇に置かれ、かつ部品が横線分（本来の
+    # 縦線分に相当）を途切れさせるため、90°回転対応（縦エッジ名称フォールバック・
+    # 横線分ギャップ橋渡し）が無いと regions=0 になっていた（2026-06-18 修正）。
+    'DE5434-553-10B.dxf': {
+        'frames': 5,
+        'min_regions': 9,
+        'queries': {
+            ('LA CHAMBER', False, False): 3,
+            ('CONTROL BOX CORE FX', False, False): 2,
+            ('CONTROL BOX CORE RX', False, False): 2,
+            ('NONEXIST', False, False): 0,
+        },
+    },
 }
 
 
@@ -104,7 +118,8 @@ def check_file(path):
 
 
 def main(argv):
-    paths = argv[1:] or sorted(glob.glob(os.path.join(_ROOT, 'EE*.dxf')))
+    paths = argv[1:] or sorted(
+        glob.glob(os.path.join(_ROOT, 'EE*.dxf')) + glob.glob(os.path.join(_ROOT, 'DE*.dxf')))
     if not paths:
         print("No EE*.dxf samples found — skipping region search regression.")
         print('PASS')
