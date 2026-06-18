@@ -42,9 +42,19 @@ class RegionSearchManager:
     def find_matching_regions(analysis, query, case_sensitive=False, whole_word=False):
         """Return the region dicts whose name matches ``query``.
 
-        A region matches when ``query`` is found in its ``default_name`` or in
-        any of its ``name_candidates`` texts, honoring the case-sensitivity and
-        whole-word options (same semantics as the text search).
+        A region matches when ``query`` is found in any of its
+        ``name_candidates`` texts (``default_name`` is always the first
+        candidate, so it does not need a separate check), honoring the
+        case-sensitivity and whole-word options (same semantics as the text
+        search).
+
+        Each returned region is a shallow copy of the corresponding entry in
+        ``analysis['regions']`` with an extra ``matched_labels`` key: a list of
+        ``(text, x, y)`` tuples for the specific candidate texts that matched
+        the query, using the coordinates recorded in
+        ``name_candidate_positions``. The UI layer uses these coordinates to
+        highlight the matched label entity itself, not just the region
+        boundary.
 
         Args:
             analysis: Result of :func:`analyze_dxf_regions`.
@@ -53,7 +63,7 @@ class RegionSearchManager:
             whole_word: If True, match whole words only.
 
         Returns:
-            List of region dicts (subset of ``analysis['regions']``).
+            List of region dicts (copies of entries in ``analysis['regions']``).
         """
         if not analysis or not query:
             return []
@@ -66,23 +76,22 @@ class RegionSearchManager:
 
         matched = []
         for region in analysis.get('regions', []):
-            names = []
-            if region.get('default_name'):
-                names.append(region['default_name'])
-            names.extend(text for _dist, text in region.get('name_candidates', []))
+            positions = region.get('name_candidate_positions', {})
+            matched_labels = []
+            for _dist, text in region.get('name_candidates', []):
+                if not RegionSearchManager._name_matches(text, needle, regex, case_sensitive):
+                    continue
+                pos = positions.get(text)
+                if pos:
+                    matched_labels.append((text, pos[0], pos[1]))
 
-            if RegionSearchManager._any_name_matches(names, needle, regex, case_sensitive):
-                matched.append(region)
+            if matched_labels:
+                matched.append(dict(region, matched_labels=matched_labels))
         return matched
 
     @staticmethod
-    def _any_name_matches(names, needle, regex, case_sensitive):
-        for name in names:
-            if regex is not None:
-                if regex.search(name):
-                    return True
-            else:
-                haystack = name if case_sensitive else name.lower()
-                if needle in haystack:
-                    return True
-        return False
+    def _name_matches(name, needle, regex, case_sensitive):
+        if regex is not None:
+            return regex.search(name) is not None
+        haystack = name if case_sensitive else name.lower()
+        return needle in haystack

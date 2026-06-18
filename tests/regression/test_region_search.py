@@ -15,11 +15,13 @@ import glob
 import os
 import sys
 
+import ezdxf
+
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from core.region_detector import analyze_dxf_regions
+from core.region_detector import analyze_dxf_regions, extract_text_from_entity
 from core.region_search_manager import RegionSearchManager
 
 
@@ -106,12 +108,38 @@ def check_file(path):
         print(f"{name}: FAIL regions {regions} < {exp['min_regions']}")
         ok = False
 
+    # Direct-modelspace (clean_text, rounded x, y) -> True, for resolving matched_labels
+    # back to a real on-screen entity (the boundary search highlights this entity, not
+    # just the region outline; see ui.main_window._highlight_matched_labels).
+    direct_labels = set()
+    doc = ezdxf.readfile(path)
+    for entity in doc.modelspace():
+        if entity.dxftype() not in ('TEXT', 'MTEXT'):
+            continue
+        _, clean_text, (x, y) = extract_text_from_entity(entity)
+        if clean_text:
+            direct_labels.add((clean_text, round(x, 3), round(y, 3)))
+
     for (query, cs, ww), expected_count in exp['queries'].items():
-        got = len(RegionSearchManager.find_matching_regions(analysis, query, cs, ww))
+        matched = RegionSearchManager.find_matching_regions(analysis, query, cs, ww)
+        got = len(matched)
         if got != expected_count:
             print(f"{name}: FAIL query={query!r} case={cs} whole={ww} "
                   f"got {got} != {expected_count}")
             ok = False
+
+        for region in matched:
+            labels = region.get('matched_labels', [])
+            if not labels:
+                print(f"{name}: FAIL query={query!r} region id={region['id']} "
+                      "matched with no matched_labels (highlight would do nothing)")
+                ok = False
+                continue
+            for (text, x, y) in labels:
+                if (text, round(x, 3), round(y, 3)) not in direct_labels:
+                    print(f"{name}: FAIL query={query!r} matched_labels entry "
+                          f"{(text, x, y)!r} does not resolve to a modelspace entity")
+                    ok = False
 
     print(f"{name}: {'OK' if ok else 'FAIL'} (frames={frames}, regions={regions})")
     return ok

@@ -501,6 +501,27 @@ def _dist_point_to_polygon(pt, poly):
     return best
 
 
+def _label_position_for_candidate(text, polygon, labels):
+    """name_candidates のテキストに対応する元ラベルの座標 (x, y) を返す。
+
+    `region_name_candidates()` はテキストのみ返す（座標を持ち出すと流用元の
+    アルゴリズムと出力契約が変わってしまうため）。同じテキストのラベルが複数
+    （他領域の同名ラベル等）ある場合は、このポリゴンに最も近いものを採用する。
+    DXF-viewer の Search Boundary が、マッチしたラベル本体をハイライトする際に
+    実体（TEXT/MTEXT エンティティ）の位置を特定するために使う。
+    """
+    best = None
+    best_d = float('inf')
+    for (t, x, y) in labels:
+        if t != text:
+            continue
+        d = _dist_point_to_polygon((x, y), polygon)
+        if d < best_d:
+            best_d = d
+            best = (x, y)
+    return best
+
+
 def _detect_regions(RH, RV, frame, frame_area, cfg, labels=None, circles=None):
     """1つの図面枠内で、面積>=枠面積×area_ratio の閉領域を検出する。"""
     xl, xr, y0, y1 = frame
@@ -769,7 +790,8 @@ def analyze_dxf_regions(dxf_file, config=None):
       frames: [(xl,xr,y0,y1), ...]
       frame_area: float
       labels: [(text, x, y), ...]  （図面枠内のみ）
-      regions: [{id, frame, polygon, area, area_pct, name_candidates, default_name}]
+      regions: [{id, frame, polygon, area, area_pct, name_candidates, default_name,
+                 name_candidate_positions}]
       error: str | None
     """
     from collections import defaultdict as _dd
@@ -839,10 +861,16 @@ def analyze_dxf_regions(dxf_file, config=None):
                         exclude_terms=det_cfg['name_exclude_terms'],
                         exclude_lowercase=det_cfg['name_exclude_lowercase'],
                         circuit_keep_terms=det_cfg.get('circuit_symbol_keep_terms', ('RACK',)))
+                    name_positions = {}
+                    for _d, text in ncands:
+                        pos = _label_position_for_candidate(text, reg['polygon'], frame_labels)
+                        if pos:
+                            name_positions[text] = pos
                     cands_list.append({
                         'polygon': reg['polygon'], 'area': reg['area'],
                         'name_candidates': ncands,
                         'default_name': ncands[0][1] if ncands else '',
+                        'name_candidate_positions': name_positions,
                     })
                 fc.append(cands_list)
             return fc
@@ -905,6 +933,7 @@ def analyze_dxf_regions(dxf_file, config=None):
                     'area_pct': 100.0 * cf['area'] / frame_area,
                     'name_candidates': cf['name_candidates'],
                     'default_name': cf['default_name'],
+                    'name_candidate_positions': cf['name_candidate_positions'],
                 })
                 rid += 1
         result['regions'] = regions
