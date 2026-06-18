@@ -137,6 +137,47 @@ def _collect_region_geometry(msp, cfg):
             _circle_block[name] = has
         return _circle_block[name]
 
+    _relevant_block = {}
+
+    def block_has_relevant_content(name):
+        """ブロック定義の直接の子に、このパスで実際に使う種類のエンティティ
+        （図面枠/領域境界線になり得る LINE・LWPOLYLINE、または常に収集対象の
+        TEXT/MTEXT）が1つでもあるかを判定する（ブロック名単位でキャッシュ）。
+
+        `e.virtual_entities()` はブロック内容全体を複製・変換するため、無関係な
+        図形（HATCH・寸法線・ネストINSERT 等）しか持たないブロックの INSERT
+        （手描き回路図では極めて多数）に対して呼ぶと無駄なコストが大きい。
+        lineweight/color は INSERT の変換（移動・回転・拡大縮小）の影響を受けない
+        ブロック定義側の静的な属性なので、変換前のブロック直接の子だけを見れば
+        十分（ネストINSERT内の内容は元々このパスでは展開対象外＝既存の挙動と同じ）。
+        判定不能な場合は安全側（True=展開する）に倒し、挙動を変えない。
+        """
+        if name not in _relevant_block:
+            has = True
+            try:
+                blk = doc.blocks.get(name) if doc else None
+                if blk is not None:
+                    has = False
+                    for x in blk:
+                        xt = x.dxftype()
+                        if xt in ('TEXT', 'MTEXT'):
+                            has = True
+                            break
+                        if xt == 'LINE':
+                            lw = getattr(x.dxf, 'lineweight', None)
+                            if lw == flw or (lw == rlw and getattr(x.dxf, 'color', None) == rcol):
+                                has = True
+                                break
+                        elif xt == 'LWPOLYLINE':
+                            lw = getattr(x.dxf, 'lineweight', None)
+                            if lw == rlw and getattr(x.dxf, 'color', None) == rcol:
+                                has = True
+                                break
+            except Exception:
+                has = True
+            _relevant_block[name] = has
+        return _relevant_block[name]
+
     def handle_line(e):
         lw = getattr(e.dxf, 'lineweight', None)
         if lw == flw:
@@ -178,6 +219,8 @@ def _collect_region_geometry(msp, cfg):
             if block_has_circle(e.dxf.name):
                 ins = e.dxf.insert
                 connection_points.append((ins[0], ins[1]))
+            if not block_has_relevant_content(e.dxf.name):
+                continue
             try:
                 for v in e.virtual_entities():
                     vt = v.dxftype()
@@ -501,7 +544,20 @@ def _dist_point_to_polygon(pt, poly):
     return best
 
 
-def _label_position_for_candidate(text, polygon, labels):
+def _group_labels_by_text(labels):
+    """テキスト→座標リスト [(x,y), ...] の辞書を返す（同名ラベルが複数ある場合に対応）。
+
+    `_label_position_for_candidate()` が同名ラベル群から最も近いものを選ぶ際に、
+    毎回 `labels` 全体を線形走査しなくて済むよう、1フレーム分の `frame_labels`
+    に対して一度だけ構築して再利用する。
+    """
+    grouped = {}
+    for (t, x, y) in labels:
+        grouped.setdefault(t, []).append((x, y))
+    return grouped
+
+
+def _label_position_for_candidate(text, polygon, positions_by_text):
     """name_candidates のテキストに対応する元ラベルの座標 (x, y) を返す。
 
     `region_name_candidates()` はテキストのみ返す（座標を持ち出すと流用元の
@@ -509,17 +565,15 @@ def _label_position_for_candidate(text, polygon, labels):
     （他領域の同名ラベル等）ある場合は、このポリゴンに最も近いものを採用する。
     DXF-viewer の Search Boundary が、マッチしたラベル本体をハイライトする際に
     実体（TEXT/MTEXT エンティティ）の位置を特定するために使う。
+
+    `positions_by_text` は `_group_labels_by_text()` の戻り値（テキスト→座標
+    リスト）。同名ラベルの件数分だけを見れば済むため、全ラベルを毎回走査する
+    より高速。
     """
-    best = None
-    best_d = float('inf')
-    for (t, x, y) in labels:
-        if t != text:
-            continue
-        d = _dist_point_to_polygon((x, y), polygon)
-        if d < best_d:
-            best_d = d
-            best = (x, y)
-    return best
+    candidates = positions_by_text.get(text)
+    if not candidates:
+        return None
+    return min(candidates, key=lambda p: _dist_point_to_polygon(p, polygon))
 
 
 def _detect_regions(RH, RV, frame, frame_area, cfg, labels=None, circles=None):
@@ -652,10 +706,42 @@ def _dist_to_vertical_edge(pt, vertical_segs):
     return best
 
 
+def _filter_eligible_labels(labels, min_letters, exclude_lowercase, exclude_terms,
+                            exclude_circuit_symbols, circuit_keep_terms):
+    """`region_name_candidates()` のラベル単位フィルタ（英字数・小文字・除外語・
+    機器符号）を適用した (text, x, y) リストを返す。
+
+    このフィルタはポリゴン（個々の領域）に依存せず、同一 cfg・同一ラベル集合
+    （1フレーム分の `frame_labels`）であれば結果は常に同じになる。
+    `analyze_dxf_regions()` はフレーム内の全領域に対して同じ `frame_labels` を
+    使って `region_name_candidates()` を繰り返し呼ぶため、領域ループの外で一度
+    だけ計算して `_eligible_labels` として渡すことで、領域数に比例した
+    正規表現・文字種判定の再計算を避けられる（大規模図面で全体処理時間の
+    半分弱を占めていたボトルネック）。
+    """
+    terms = [s for s in (exclude_terms or ())]
+    keep_terms_upper = [k.upper() for k in (circuit_keep_terms or ())]
+    out = []
+    for (t, x, y) in labels:
+        if _count_letters(t) < min_letters:
+            continue
+        if exclude_lowercase and any('a' <= ch <= 'z' for ch in t):
+            continue
+        up = t.upper()
+        if any(term.upper() in up for term in terms):
+            continue
+        if exclude_circuit_symbols and not any(k in up for k in keep_terms_upper):
+            matched, _ = filter_non_circuit_symbols([t])
+            if matched:
+                continue
+        out.append((t, x, y))
+    return out
+
+
 def region_name_candidates(polygon, labels, max_dist=10.0, min_dist=1.0, min_letters=3,
                            limit=8, exclude_circuit_symbols=True, exclude_terms=('NOTE', '☆'),
                            exclude_lowercase=True, circuit_keep_terms=('RACK',),
-                           also_scan_vertical=False):
+                           also_scan_vertical=False, _eligible_labels=None):
     """領域名候補ラベルを境界エッジへの距離順に返す（テキスト重複除去）。
 
     通常は下端エッジからの距離 [min_dist, max_dist] で評価する。
@@ -675,23 +761,20 @@ def region_name_candidates(polygon, labels, max_dist=10.0, min_dist=1.0, min_let
       - exclude_terms のいずれかを含むラベル（例 NOTE, ☆）は除外
       - exclude_lowercase=True のとき英小文字を含むラベルは除外（領域名は大文字）
       - exclude_circuit_symbols=True のとき機器符号（候補）パターン一致は除外
+
+    `_eligible_labels` は `_filter_eligible_labels()` の結果を呼び出し側が
+    キャッシュ済みの場合に渡す内部最適化用の引数（省略時はこの関数内で計算する
+    ため、外部から呼ぶ場合は省略してよく、結果は変わらない）。
     """
-    terms = [s for s in (exclude_terms or ())]
+    eligible = _eligible_labels
+    if eligible is None:
+        eligible = _filter_eligible_labels(
+            labels, min_letters, exclude_lowercase, exclude_terms,
+            exclude_circuit_symbols, circuit_keep_terms)
 
     def _scan(edge_segs, md_lo, dist_fn):
         cand = []
-        for (t, x, y) in labels:
-            if _count_letters(t) < min_letters:
-                continue
-            if exclude_lowercase and any('a' <= ch <= 'z' for ch in t):
-                continue
-            up = t.upper()
-            if any(term.upper() in up for term in terms):
-                continue
-            if exclude_circuit_symbols and not any(k.upper() in up for k in (circuit_keep_terms or ())):
-                matched, _ = filter_non_circuit_symbols([t])
-                if matched:
-                    continue
+        for (t, x, y) in eligible:
             d = dist_fn((x, y), edge_segs)
             if md_lo <= d <= max_dist:
                 cand.append((d, t))
@@ -769,7 +852,15 @@ def _is_titleblock_region(polygon, labels):
     has_dn = False
     has_term = False
     terms = ('TITLE', 'REVISION', 'DWG', '流用元', '図番')
+    xs = [p[0] for p in polygon]
+    ys = [p[1] for p in polygon]
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = min(ys), max(ys)
     for (t, x, y) in labels:
+        # 多角形のバウンディングボックス外なら内外判定(_point_in_polygon)自体が
+        # 確実に False になるので、安価な範囲チェックで先に大半を弾く。
+        if x < x0 or x > x1 or y < y0 or y > y1:
+            continue
         if not _point_in_polygon((x, y), polygon):
             continue
         if not has_dn and extract_drawing_numbers(t):
@@ -836,10 +927,20 @@ def analyze_dxf_regions(dxf_file, config=None):
         single_thr = frame_area * cfg['area_ratio']            # 単独領域の閾値(20%)
         group_thr = frame_area * cfg.get('group_area_ratio', 0.10)  # 同名複数ピース合算の閾値(10%)
         rotated = _is_globally_rotated(label_entities)
+        # frame_labels はこの後の全パス・全領域で不変なので、テキスト→座標の逆引き
+        # 辞書は一度だけ構築して再利用する（_label_position_for_candidate 用）。
+        labels_by_text = _group_labels_by_text(frame_labels)
 
         def _run_detection(lines, det_cfg):
             """lines から H/V 分類 → 候補面リストを返す内部ヘルパー。"""
             RH, RV = _split_axis_aligned(lines, det_cfg['snap'])
+            # ラベル単位フィルタ（英字数・小文字・除外語・機器符号）は領域に依存せず
+            # det_cfg と frame_labels だけで決まるため、領域ループの外で一度だけ計算する
+            # （領域数に比例した正規表現の再評価を避ける最大のボトルネック対策）。
+            eligible_labels = _filter_eligible_labels(
+                frame_labels, det_cfg['name_min_letters'], det_cfg['name_exclude_lowercase'],
+                det_cfg['name_exclude_terms'], det_cfg['exclude_circuit_symbols'],
+                det_cfg.get('circuit_symbol_keep_terms', ('RACK',)))
             fc = []
             for fi, frame in enumerate(frames):
                 cands_list = []
@@ -860,10 +961,11 @@ def analyze_dxf_regions(dxf_file, config=None):
                         exclude_circuit_symbols=det_cfg['exclude_circuit_symbols'],
                         exclude_terms=det_cfg['name_exclude_terms'],
                         exclude_lowercase=det_cfg['name_exclude_lowercase'],
-                        circuit_keep_terms=det_cfg.get('circuit_symbol_keep_terms', ('RACK',)))
+                        circuit_keep_terms=det_cfg.get('circuit_symbol_keep_terms', ('RACK',)),
+                        _eligible_labels=eligible_labels)
                     name_positions = {}
                     for _d, text in ncands:
-                        pos = _label_position_for_candidate(text, reg['polygon'], frame_labels)
+                        pos = _label_position_for_candidate(text, reg['polygon'], labels_by_text)
                         if pos:
                             name_positions[text] = pos
                     cands_list.append({

@@ -249,6 +249,36 @@ DXF-viewer 独自のツールバー／メニューで代替できる。
 - 回帰テスト: `tests/regression/test_region_search.py`（検出枠数・領域数・名称マッチ件数・
   `matched_labels` が実在の modelspace エンティティへ解決できること）。
 
+**パフォーマンス最適化（2026-06-18 追加）**
+
+大規模図面（数万エンティティ・数万 INSERT 規模）で `analyze_dxf_regions()` が遅い問題に対応。
+プロファイリングで判明したボトルネックは大きく3つ（実測: EE6868-500-01C.dxf で
+4.80秒→2.41秒、DE5434-553-10B.dxf で1.05秒→0.47秒、いずれも約2倍。出力は最適化前後で
+完全に同一であることを JSON 比較で確認済み）。アルゴリズムの判定結果やしきい値は
+一切変更していない（同じ計算を無駄なく1回で済ませるだけ）。
+
+1. **ラベル単位フィルタの前計算（`_filter_eligible_labels`）**: `region_name_candidates()`
+   は英字数・小文字・除外語・機器符号といったラベル単位の判定を、領域（ポリゴン）に
+   一切依存せず行っていたにもかかわらず、領域ごとに呼ばれるたびに全ラベルへ再計算していた
+   （1フレームの領域数 × ラベル数）。`analyze_dxf_regions()` 側で1パスにつき一度だけ
+   `_filter_eligible_labels()` を計算し、`region_name_candidates(..., _eligible_labels=...)`
+   に渡すことで再計算を排除した。`_eligible_labels` 省略時は関数内で計算するため、外部から
+   単体で呼ぶ場合の挙動・結果は変わらない。
+2. **無関係なブロックの `virtual_entities()` 展開スキップ（`block_has_relevant_content`）**:
+   `_collect_region_geometry()` は INSERT ごとに `e.virtual_entities()`（ブロック内容を複製・
+   変換する重い処理）を呼んでいたが、手描き回路図では「無関係な図形しか持たないブロックの
+   INSERT」が極めて多い（実測ファイルで6万件超）。lineweight/color はブロック定義側の静的な
+   属性で INSERT の変換の影響を受けないため、ブロック定義の直接の子だけを見て「図面枠/領域
+   境界線になり得る LINE・LWPOLYLINE」または「常に収集対象の TEXT/MTEXT」が1つもないことが
+   分かれば、`virtual_entities()` 自体を呼ばずにスキップする（ブロック名単位でキャッシュ）。
+3. **`_is_titleblock_region` のバウンディングボックス事前判定**: 領域ごとに全ラベルへ
+   `_point_in_polygon`（多角形内外判定）を呼んでいたが、大半のラベルは明らかにポリゴンの
+   外（バウンディングボックス外）にあるため、安価な範囲チェックで先に弾いてから
+   `_point_in_polygon` を呼ぶようにした。
+
+これらは内部実装のみの変更で、`analyze_dxf_regions()` の戻り値・公開関数の挙動は変えていない
+（`tests/regression/test_region_search.py` の既存期待値もそのまま全て成立）。
+
 ### レイヤー統合 / Consolidate Layers（`core/layer_consolidator.py`）
 
 入力 DXF に多数存在する `NoLayerName_xxx` などのレイヤーを、英語名の **2 レイヤー**へ
@@ -326,4 +356,4 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-06-18（Search Boundary の90°回転図面対応を DXF-extract-labels から移植 + マッチしたラベル本体の色書換えハイライトを追加）*
+*最終更新: 2026-06-18（Search Boundary の90°回転図面対応を DXF-extract-labels から移植 + マッチしたラベル本体の色書換えハイライトを追加 + analyze_dxf_regions のラベル前計算によるパフォーマンス最適化）*
