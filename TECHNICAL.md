@@ -189,6 +189,22 @@ DXF-viewer 独自のツールバー／メニューで代替できる。
   座標リスト機能で頂点座標を確認した際に発覚）。`linetype='ByLayer'` の場合はレイヤーの
   既定線種まで解決する。
 
+  **コード構造のリファクタリング（2026-06-21 追加・DXF-extract-labels から移植）**
+
+  上記の機能追加が積み重なり `region_detector.py` が大規模化したため、モジュール性・
+  可読性向けの整理を実施（ロジック変更なし、検出結果は不変）。セクション見出しコメント
+  で12ブロック（依存関数／設定／ジオメトリ収集／ポリゴン幾何ユーティリティ／線分結合／
+  図面枠検出／閉領域検出／名称候補／ラベル座標逆引き／回転判定／タイトルブロック除外／
+  トップレベル解析）に整理し、最も複雑だった `_find_rectilinear_faces`（旧175行）を
+  `_build_planar_graph`（平面グラフ構築）・`_peel_dangling_branches`（行き止まり枝の
+  除去・連結成分化）・`_trace_faces`（半面探索）の3関数に分割。`analyze_dxf_regions`
+  内の入れ子クロージャ（`_run_detection`/`_hits`）も `_run_region_detection`/
+  `_count_threshold_hits` としてモジュールレベルに抽出した。DXF-viewer 独自の最適化
+  （`_filter_eligible_labels` の事前計算キャッシュ・`block_has_relevant_content` による
+  INSERT展開スキップ）・Search Boundary 用のラベル座標逆引き（`_group_labels_by_text`/
+  `_label_position_for_candidate`）はそのまま保持。`tests/regression/test_region_search.py`
+  等、回帰テストは全て同じ検出件数・出力で通過を確認済み。
+
   **図面枠検出 (`detect_drawing_frames`)**
 
   lineweight=100 の縦線分を `_merge_collinear(bridge=False)` で統合（接触/重複のみ結合、
@@ -466,4 +482,4 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-06-21（矩形領域の辺ホバーハイライトを輪郭のみに限定 + Search Boundary に頂点座標リストでの検索を追加 + 閉領域検出で行き止まり枝を除去し頂点座標の重複アーティファクト・領域重複検出バグを解消 + 行き止まり枝を連結成分単位でグルーピング + 領域名候補の優先順位(Tier)制を導入 + 領域境界線の収集にPHANTOM等の線種除外を追加）*
+*最終更新: 2026-06-21（矩形領域の辺ホバーハイライトを輪郭のみに限定 + Search Boundary に頂点座標リストでの検索を追加 + 閉領域検出で行き止まり枝を除去し頂点座標の重複アーティファクト・領域重複検出バグを解消 + 行き止まり枝を連結成分単位でグルーピング + 領域名候補の優先順位(Tier)制を導入 + 領域境界線の収集にPHANTOM等の線種除外を追加 + region_detector.py のモジュール性・可読性向けリファクタ）*
