@@ -114,6 +114,24 @@ LWPOLYLINE の輪郭線上はホバー可能（`_HIT_WIDTH=3.0` の帯が hit ar
 内側は click-through となり内部エンティティのホバーが機能する。
 `_OverlayPolygonItem` と同じ `shape()` オーバーライドパターン。
 
+### ホバーハイライトを輪郭のみに限定（`_OutlineHighlightGraphicsView`、2026-06-21 追加）
+
+ezdxf の `CADGraphicsViewWithOverlay.drawForeground()` は、ホバー中アイテムの
+**`boundingRect()` 全体**を緑（`QColor(0,255,0,100)`）で塗る。閉じた `QGraphicsPathItem`
+（上記の `_ClickThroughPathItem`、典型的には lineweight=25/color=2 の閉じた LWPOLYLINE
+で描かれた矩形領域の境界）は、`shape()` を outline のみに絞っていても
+**`boundingRect()` は依然としてパス全体（矩形の全域）を返す**ため、辺にホバーすると
+領域全体が緑で塗り潰され、ホバー中の辺そのものが見えなくなっていた。
+
+**修正**: `CADGraphicsViewWithOverlay` を継承する `_OutlineHighlightGraphicsView` を追加し、
+`drawForeground()` を `item.boundingRect()` ではなく `item.shape()`（実際にヒットテストされた
+輪郭の帯）を塗るよう上書き。`PinchZoomCADViewer.__init__` は `CADViewer.__init__(cad=...)` に
+`CADWidget(_OutlineHighlightGraphicsView(), config=Configuration())` を渡すことでこのビューを
+注入する（`CADViewer.__init__` が `cad` 引数を受け付ける既存のフックを利用、monkey-patch 不要）。
+通常の `LINE`（`QGraphicsLineItem`）は `shape()` と `boundingRect()` がほぼ同じ細い帯なので
+見た目は変わらない。ヒット判定・選択ロジック（`_selected_items` 等）・サイドバーの属性表示は
+変更していない。
+
 ### ezdxf CADViewer メニューの非表示化
 
 `CADViewer`（ezdxf）は `QMainWindow` サブクラスであり、`__init__` で
@@ -242,12 +260,37 @@ DXF-viewer 独自のツールバー／メニューで代替できる。
   `Search > Clear Boundary Highlight` で消去する。検索がアクティブな状態（dim 中）で
   Clear Boundary Highlight を押した場合は、オーバーレイ除去に加えて**元の色も復元**する
   （図面が dim 一色のまま残らないようにする）。
+- **頂点座標リストによる検索（2026-06-21 追加）**: 名称検索の代わりに、矩形領域の頂点座標
+  リストを直接貼り付けて該当領域をハイライトできる。DXF-extract-labels の領域カードの
+  「📐」ポップオーバーに表示される「頂点の座標（左下から / N点）」のテキスト
+  （`1: (185.19, 23.07)` 形式、1行1頂点）をそのままコピーして
+  `BoundarySearchDialog` の「Or Search by Vertex Coordinates」欄に貼り付ける想定。
+  - `RegionSearchManager.parse_corner_list(text)`: 各行から `(数値, 数値)` のペアを正規表現
+    で抜き出す（行頭の番号・括弧の有無は問わない）。1点も抜き出せなければ呼び出し側
+    （`DXFViewerApp.search_boundary()`）が警告ダイアログを出して中断する（空の名称検索に
+    フォールバックしない）。
+  - `RegionSearchManager.find_region_by_corners(analysis, corners, tol=0.15)`: 各領域が
+    既に保持している `corners`（`region_detector._polygon_corners()` の出力、左下から順）
+    と照合する。点数が一致し、かつ貼り付けた各点が許容誤差 `tol` 以内で領域側のいずれか
+    異なる頂点に対応付けられる（最近接点への貪欲な一対一割り当て）ことを要求する。
+    `tol=0.15` は貼り付けテキストの小数2桁四捨五入誤差（最大0.005）より十分大きく、
+    領域内の頂点間距離（通常数十単位以上）より十分小さいため、誤マッチの恐れはない。
+    順序・回転方向に依存しないため、DXF-extract-labels 側と DXF-viewer 側で
+    `_polygon_corners()` の開始点・巻き方向に将来ズレが生じても頑健。
+  - **入力の優先順位**: ダイアログの座標欄が空でなければ名称欄は無視される（座標貼り付けは
+    明示的でより具体的な操作のため）。マッチ後の処理（オーバーレイ描画・dim・zoom-to-fit）
+    は名称検索と完全に共通（`_apply_boundary_highlight()`）。ただし座標検索でマッチした
+    領域には `matched_labels` が無いため、`_highlight_matched_labels()` はラベル文字列の
+    色書換えをスキップする（境界線のみ赤くハイライトされる）。
 - **操作**: ツールバーの「Search Boundary...」「Clear Boundary Highlight」ボタン
   （`Search` メニューにも同項目あり。Ctrl+B でも起動）。
 - **状態（`DXFTab`）**: `region_analysis`・`matched_regions`・`boundary_overlay_items`・
   `boundary_search_active`・`boundary_keep_highlight`。
 - 回帰テスト: `tests/regression/test_region_search.py`（検出枠数・領域数・名称マッチ件数・
-  `matched_labels` が実在の modelspace エンティティへ解決できること）。
+  `matched_labels` が実在の modelspace エンティティへ解決できること、各サンプルの先頭5領域
+  について「`corners` を `頂点の座標` と同じ書式に整形→`parse_corner_list`→
+  `find_region_by_corners`」のラウンドトリップで元の領域 1 件にのみ一致すること、
+  無関係な座標では一致しないこと）。
 
 **パフォーマンス最適化（2026-06-18 追加）**
 
@@ -356,4 +399,4 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-06-18（Search Boundary の90°回転図面対応を DXF-extract-labels から移植 + マッチしたラベル本体の色書換えハイライトを追加 + analyze_dxf_regions のラベル前計算によるパフォーマンス最適化）*
+*最終更新: 2026-06-21（矩形領域の辺ホバーハイライトを輪郭のみに限定 + Search Boundary に頂点座標リストでの検索を追加）*
