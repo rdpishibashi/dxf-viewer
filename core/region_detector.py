@@ -459,7 +459,7 @@ def _find_rectilinear_faces(Hm, Vm, eps):
     # 生む（面積には寄与しないが、頂点座標の表示を汚す）。真の境界閉路は必ず次数2
     # 以上のノードのみで構成されるため、次数1のノードとその辺を再帰的に除去
     # （2-core抽出）してから面探索する。
-    dangling_edges = []
+    peeled_pairs = []  # (leaf_key, other_key)、除去順
     changed = True
     while changed:
         changed = False
@@ -469,14 +469,50 @@ def _find_rectilinear_faces(Hm, Vm, eps):
             if not nbrs:
                 continue
             other = next(iter(nbrs))
-            dangling_edges.append((node_xy[leaf], node_xy[other]))
+            peeled_pairs.append((leaf, other))
             adj[other].discard(leaf)
             if not adj[other]:
                 del adj[other]
             del adj[leaf]
             changed = True
+
+    # 除去した辺を「枝（連結成分）」単位にまとめる。1本の枝が複数の短い線分の
+    # 連なりで構成される場合（部品が複数回切れ目を入れている、あるいは1本の長い
+    # 線が途中まで領域境界として使われ残りが余剰になっている等）も、先端から
+    # 現存グラフへの取り付け点までを1つの枝として扱う（Union-Find で連結成分化）。
+    dangling_branches = []
+    if peeled_pairs:
+        parent = {}
+
+        def _uf_find(x):
+            while parent.get(x, x) != x:
+                x = parent[x]
+            return x
+
+        def _uf_union(a, b):
+            ra, rb = _uf_find(a), _uf_find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        for a, b in peeled_pairs:
+            parent.setdefault(a, a)
+            parent.setdefault(b, b)
+            _uf_union(a, b)
+
+        groups = {}
+        for a, b in peeled_pairs:
+            groups.setdefault(_uf_find(a), []).append((a, b))
+
+        for edges in groups.values():
+            keys = {k for ab in edges for k in ab}
+            attach_keys = [k for k in keys if k in adj]
+            dangling_branches.append({
+                'edges': [(node_xy[a], node_xy[b]) for a, b in edges],
+                'attachment': node_xy[attach_keys[0]] if attach_keys else None,
+            })
+
     if not adj:
-        return [], dangling_edges
+        return [], dangling_branches
 
     def ang(a, b):
         ax, ay = node_xy[a]
@@ -506,7 +542,7 @@ def _find_rectilinear_faces(Hm, Vm, eps):
                     break
             if ok and len(face) >= 4:
                 faces.append(face)
-    return faces, dangling_edges
+    return faces, dangling_branches
 
 
 def _polygon_area(poly):
