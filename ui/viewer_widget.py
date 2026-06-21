@@ -1,6 +1,9 @@
 """Custom CAD viewer widget with enhanced functionality."""
 
-from ezdxf.addons.drawing.qtviewer import CADViewer
+from ezdxf.addons.drawing.qtviewer import (
+    CADViewer, CADWidget, CADGraphicsView, CADGraphicsViewWithOverlay,
+)
+from ezdxf.addons.drawing.config import Configuration
 from ezdxf.addons.drawing.pyqt import PyQtBackend
 from ezdxf.npshapes import to_qpainter_path
 from PyQt5.QtCore import Qt, QEvent
@@ -45,11 +48,38 @@ class _ClickThroughBackend(PyQtBackend):
         self._add_item(item, properties.handle)
 
 
+class _OutlineHighlightGraphicsView(CADGraphicsViewWithOverlay):
+    """CADGraphicsViewWithOverlay that highlights only the hovered item's
+    hit outline instead of its full bounding box.
+
+    ezdxf's drawForeground() fills item.boundingRect() in green. For a closed
+    path item (e.g. a closed LWPOLYLINE rendered as a region boundary),
+    boundingRect() spans the entire enclosed area, so hovering near one edge
+    paints the whole region green and obscures the entity actually under the
+    cursor. Filling item.shape() instead confines the highlight to the
+    outline band that was actually hit-tested (a no-op for plain LINE items,
+    whose shape() already approximates their boundingRect()).
+    """
+
+    def drawForeground(self, painter, rect):
+        CADGraphicsView.drawForeground(self, painter, rect)
+        if self._selected_items and self._mark_selection:
+            item = self._selected_items[self._selected_index]
+            path = item.sceneTransform().map(item.shape())
+            painter.save()
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(0, 255, 0, 100))
+            painter.drawPath(path)
+            painter.restore()
+
+
 class PinchZoomCADViewer(CADViewer):
     """CADViewer with pinch gesture zoom and background color support."""
 
     def __init__(self):
-        super().__init__()
+        super().__init__(
+            cad=CADWidget(_OutlineHighlightGraphicsView(), config=Configuration())
+        )
 
         # Hide ezdxf CADViewer's built-in menus (Select Layout, Reload, etc.)
         # so they don't appear in macOS's global menu bar.
