@@ -784,8 +784,24 @@ class DXFViewerApp(QMainWindow):
 
         params = dialog.get_search_params()
         query = params['text'].strip()
-        if not query:
+        corners_text = params['corners_text'].strip()
+        if not query and not corners_text:
             return
+
+        # Pasted vertex coordinates take precedence over the name field when
+        # both are filled in — pasting a coordinate list is a deliberate,
+        # more specific action than whatever text happens to remain in the
+        # name field from a previous search.
+        corners = []
+        if corners_text:
+            corners = RegionSearchManager.parse_corner_list(corners_text)
+            if not corners:
+                QMessageBox.warning(
+                    self, "Search Boundary",
+                    "Could not parse any vertex coordinates from the pasted text.")
+                return
+        by_corners = bool(corners)
+        search_label = f"{len(corners)} pasted vertices" if by_corners else query
 
         # A boundary search is mutually exclusive with the text/boundary search
         # already applied; clear any existing highlight and persisted overlay.
@@ -800,8 +816,11 @@ class DXFViewerApp(QMainWindow):
         try:
             analysis = RegionSearchManager.get_analysis(tab_data)
             if analysis and not analysis.get('error'):
-                matched = RegionSearchManager.find_matching_regions(
-                    analysis, query, params['case_sensitive'], params['whole_word'])
+                if by_corners:
+                    matched = RegionSearchManager.find_region_by_corners(analysis, corners)
+                else:
+                    matched = RegionSearchManager.find_matching_regions(
+                        analysis, query, params['case_sensitive'], params['whole_word'])
                 if matched:
                     self._apply_boundary_highlight(
                         tab_data, matched, params['dim_color'], params['keep_highlight'])
@@ -818,12 +837,12 @@ class DXFViewerApp(QMainWindow):
         if not matched:
             QMessageBox.information(
                 self, "Search Boundary",
-                f"No regions matching '{query}' were found.")
+                f"No regions matching '{search_label}' were found.")
             self.status_bar.showMessage("No matching regions found")
             return
 
         self.status_bar.showMessage(
-            f"Found {len(matched)} region(s) matching '{query}'")
+            f"Found {len(matched)} region(s) matching '{search_label}'")
 
     def _apply_boundary_highlight(self, tab_data, matched, dim_color, keep_highlight):
         """Dim the drawing, draw region overlays, zoom to fit, and update state."""

@@ -54,7 +54,9 @@ python dxf_viewer.py drawing1 drawing2
 
 - **Multi-tab Interface**: View multiple DXF files simultaneously
 - **Search**: Find text entities with customizable highlighting
-- **Boundary Search**: Find rectangular regions by name and highlight their boundaries (Ctrl+B)
+- **Boundary Search**: Find rectangular regions by name, or by pasting a vertex
+  coordinate list (e.g. copied from DXF-extract-labels's region popover), and
+  highlight their boundaries (Ctrl+B)
 - **Layer Consolidation**: Collapse all source layers into `Boundaries` and `Imported` (Tools menu)
 - **Color Management**: Change entity colors with background-aware rendering
 - **Background Color**: Customize viewer background
