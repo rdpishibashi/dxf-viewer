@@ -205,6 +205,36 @@ DXF-viewer 独自のツールバー／メニューで代替できる。
   `_label_position_for_candidate`）はそのまま保持。`tests/regression/test_region_search.py`
   等、回帰テストは全て同じ検出件数・出力で通過を確認済み。
 
+  **Search Boundary のマッチング精度修正（2026-06-21 追加）**
+
+  `EE6313-546-01E.dxf` を Search Boundary で "B CHAMBER" 検索すると、境界線が
+  交わらない領域1（外側、`B CHAMBER`）・領域2（内側、`BAKE HEATER UNIT RX`、
+  完全内包）の**両方**がハイライトされる不具合をユーザーが報告。"BAKE HEATER
+  UNIT RX" 検索でも同様。原因は `region_name_candidates()` が境界近傍の全ラベル
+  を確信度付きで列挙するだけで、入れ子/隣接領域は互いの候補リストに相手の名称も
+  持つこと、かつ `find_matching_regions()` がその `name_candidates` 全体と照合
+  していたこと。
+
+  対策として `find_matching_regions()` を、各領域の最上位候補（`default_name`。
+  ユーザー確認: DXF-extract-labels の Tier 優先順位制と同じ仕組みで選ばれる
+  「一番優先順位が高いラベル」）のみと照合するよう変更。これにより、各領域は
+  自分自身の最有力候補にのみマッチし、上記の入れ子ケースは正しく1領域だけが
+  マッチするようになった。
+
+  この変更を機に、`region_name_candidates()` 自体の Tier1/2 判定に既存バグが
+  あることが判明: Tier1/2 のスキャンが「領域の内側にあるラベルか」を確認して
+  いなかったため、`DE5434-553-10B.dxf` の回転領域で、領域の**外側**にある
+  ラベル `EFEM UPPER`（距離3.9）が、領域の**内側**にある正しいラベル
+  `CONTROL BOX CORE FX`（距離5.2）より単純な距離比較で優先されてしまっていた
+  （ユーザー指摘: "EFEM UPPER は領域の外側なので、優先順位は CONTROL BOX CORE FX
+  よりも低いはず"）。`region_name_candidates()` の `_scan()` に `require_inside`
+  引数を追加し、Tier1/2 では `_point_in_polygon()` で領域内側のラベルのみを
+  対象にするよう修正（Tier3 フォールバックは内外を問わず従来通り）。
+  `tests/regression/test_region_search.py` の `EE6313-546-01E.dxf`・
+  `EE6888-631-01A.dxf`・`EE6492-631-02A.dxf` 期待値を更新（後2者は、SB-1A
+  領域が領域外のラベル `SYSTEM I/F BOX` を弱い候補として持っていたため
+  `'SYSTEM'` 検索が4件→2件に変化。DXF-extract-labels 側にも同じ修正を移植済み）。
+
   **図面枠検出 (`detect_drawing_frames`)**
 
   lineweight=100 の縦線分を `_merge_collinear(bridge=False)` で統合（接触/重複のみ結合、
@@ -482,4 +512,4 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-06-21（矩形領域の辺ホバーハイライトを輪郭のみに限定 + Search Boundary に頂点座標リストでの検索を追加 + 閉領域検出で行き止まり枝を除去し頂点座標の重複アーティファクト・領域重複検出バグを解消 + 行き止まり枝を連結成分単位でグルーピング + 領域名候補の優先順位(Tier)制を導入 + 領域境界線の収集にPHANTOM等の線種除外を追加 + region_detector.py のモジュール性・可読性向けリファクタ）*
+*最終更新: 2026-06-21（矩形領域の辺ホバーハイライトを輪郭のみに限定 + Search Boundary に頂点座標リストでの検索を追加 + 閉領域検出で行き止まり枝を除去し頂点座標の重複アーティファクト・領域重複検出バグを解消 + 行き止まり枝を連結成分単位でグルーピング + 領域名候補の優先順位(Tier)制を導入 + 領域境界線の収集にPHANTOM等の線種除外を追加 + region_detector.py のモジュール性・可読性向けリファクタ + Search Boundary が最上位候補のみで照合するよう修正し領域名候補のTier1/2を領域内側のラベルに限定）*
