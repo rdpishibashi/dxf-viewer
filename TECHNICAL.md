@@ -213,10 +213,10 @@ DXF-viewer 独自のツールバー／メニューで代替できる。
   対応として `_is_globally_rotated(label_entities)` がラベル(TEXT/MTEXT)の過半数の
   回転角(`_label_rotation_angle`、MTEXT は `text_direction` ベクトル優先)から図面全体の
   回転を明示的に判定し、回転図面と判定された場合のみ:
-  - `region_name_candidates()` で縦エッジ（`_all_vertical_edges`）候補を**常に**横エッジ
-    候補と合算する（`also_scan_vertical=True`。候補ゼロ時だけのフォールバックでは、
-    境界線上に偶然乗った無関係なラベルが横エッジ側で1件見つかると縦エッジ側の正解が
-    隠れてしまうため）。
+  - `region_name_candidates()` の Tier1/2（下端相当/上端相当の最近傍）を、横エッジ
+    （下端/上端）ではなく左右いずれかの縦エッジに切り替える（`rotated_edge_roles`。
+    詳細は後述の v1.5.9 セクション参照。旧実装の `also_scan_vertical=True`〈横エッジ
+    候補に縦エッジ候補を常時合算〉は v1.5.9 でこの Tier 制に置き換えた）。
   - `_detect_regions()` で `bridge_horizontal_gaps=True` を有効化し、縦ギャップ橋渡しと
     同じ安全条件（コーナー相手なし・CIRCLEなし、x/y入れ替えで判定）で横線分のギャップも
     橋渡しする。
@@ -264,6 +264,28 @@ DXF-viewer 独自のツールバー／メニューで代替できる。
   取り込んでいたため、名称候補も正しくなった）。
   `tests/regression/test_region_search.py` の `DE5434-553-10B.dxf` 期待値を
   `min_regions` 9→8 に更新済み。他サンプルの検出結果は変化なし。
+
+  **領域名候補の優先順位（Tier）制（2026-06-21 追加・DXF-extract-labels から移植）**
+
+  `region_name_candidates()` を「候補ゼロのときだけ次のフォールバックを試す」
+  という旧構造から、明示的な優先順位（Tier）制に置き換えた:
+  - Tier1: 下端横エッジ最近傍（回転図面では `_rotated_edge_roles()` が判定した
+    側の縦エッジ＝下端相当。実例: `DE5434-553-10B.dxf`〈回転角+90°多数派〉では右端）
+  - Tier2: 上端横エッジ最近傍（回転図面ではもう一方の縦エッジ＝上端相当）
+  - Tier3: Tier1/2 のいずれでも候補ゼロの場合のみ、ポリゴン境界全体（任意の辺）
+    への最短距離でフォールバック評価する（`_dist_point_to_polygon`）。
+
+  DXF-extract-labels 側はこの変更を「入れ子/隣接する2領域が互いの候補リストに
+  相手の名称を含む場合、領域選択UIの他領域同期ロジックが片方の領域自身の最有力
+  候補（下端最近傍）を誤って上書きする」不具合の修正として導入した
+  （`EE6313-546-01E.dxf` の図面1/領域1,2 が同じ選択に同期される報告）。DXF-viewer
+  には対応する領域選択UI自体が無いため同期ロジックの修正対象は無いが、
+  「アルゴリズム本体は同一に保つ」方針に従い `region_name_candidates()` の
+  Tier 化と `_rotated_edge_roles()` のみ移植した（`default_name_tier` の付与は
+  DXF-viewer 側に消費者が無いため移植していない）。回帰テスト
+  `tests/regression/test_region_search.py` の既存期待値（`DE5434-553-10B.dxf` の
+  `LA CHAMBER`/`CONTROL BOX CORE FX`/`CONTROL BOX CORE RX` 一致件数）に変化が
+  無いことを確認済み。
 - **マッチ**: `RegionSearchManager.find_matching_regions()` が入力名称を各領域の
   `name_candidates`（`default_name` は常にその先頭要素なので別チェック不要）と照合
   （case sensitive / whole word 対応）。戻り値は `analysis['regions']` 各要素の浅いコピー
@@ -433,4 +455,4 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-06-21（矩形領域の辺ホバーハイライトを輪郭のみに限定 + Search Boundary に頂点座標リストでの検索を追加 + 閉領域検出で行き止まり枝を除去し頂点座標の重複アーティファクト・領域重複検出バグを解消 + 行き止まり枝を連結成分単位でグルーピング）*
+*最終更新: 2026-06-21（矩形領域の辺ホバーハイライトを輪郭のみに限定 + Search Boundary に頂点座標リストでの検索を追加 + 閉領域検出で行き止まり枝を除去し頂点座標の重複アーティファクト・領域重複検出バグを解消 + 行き止まり枝を連結成分単位でグルーピング + 領域名候補の優先順位(Tier)制を導入）*
