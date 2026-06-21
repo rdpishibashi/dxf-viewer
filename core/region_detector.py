@@ -451,7 +451,32 @@ def _find_rectilinear_faces(Hm, Vm, eps):
                 adj.setdefault(ka, set()).add(kb)
                 adj.setdefault(kb, set()).add(ka)
     if not adj:
-        return []
+        return [], []
+
+    # --- 行き止まり枝（dangling edge）の除去 ---
+    # 半面探索は次数1のノードに到達すると、戻る辺が1本しかないため必ず同じ辺を
+    # 折り返す。この往復が生のポリゴンに「同じ座標が2回連続する」アーティファクトを
+    # 生む（面積には寄与しないが、頂点座標の表示を汚す）。真の境界閉路は必ず次数2
+    # 以上のノードのみで構成されるため、次数1のノードとその辺を再帰的に除去
+    # （2-core抽出）してから面探索する。
+    dangling_edges = []
+    changed = True
+    while changed:
+        changed = False
+        leaves = [n for n, nbrs in adj.items() if len(nbrs) == 1]
+        for leaf in leaves:
+            nbrs = adj.get(leaf)
+            if not nbrs:
+                continue
+            other = next(iter(nbrs))
+            dangling_edges.append((node_xy[leaf], node_xy[other]))
+            adj[other].discard(leaf)
+            if not adj[other]:
+                del adj[other]
+            del adj[leaf]
+            changed = True
+    if not adj:
+        return [], dangling_edges
 
     def ang(a, b):
         ax, ay = node_xy[a]
@@ -481,7 +506,7 @@ def _find_rectilinear_faces(Hm, Vm, eps):
                     break
             if ok and len(face) >= 4:
                 faces.append(face)
-    return faces
+    return faces, dangling_edges
 
 
 def _polygon_area(poly):
@@ -616,7 +641,7 @@ def _detect_regions(RH, RV, frame, frame_area, cfg, labels=None, circles=None):
                           h_endpoints=h_endpoints, corner_tol=ctol)
     # 端点接続ベースの面探索（中ほど交差では繋がない）ため、部品矩形の縦線は領域辺の
     # 途中を横切るだけで接続せず、回り込みは発生しない。
-    faces = _find_rectilinear_faces(Hm, Vm, fsnap)
+    faces, _dangling = _find_rectilinear_faces(Hm, Vm, fsnap)
     thr = frame_area * cfg.get('min_face_ratio', 0.005)
     regions = []
     seen = set()
