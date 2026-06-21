@@ -9,7 +9,25 @@
 
 このモジュールは DXF-extract-labels プロジェクトの同名モジュールを DXF-viewer 用に
 移植したもの。アルゴリズム本体は流用元と同一で、依存関数（テキスト抽出・図番抽出・
-機器符号フィルタ）のみ自己完結化している。
+機器符号フィルタ）のみ自己完結化している。DXF-extract-labels 側にしか無い機能
+（領域名称選択UI向けの `default_name_tier`・`regions_overlap`・行き止まり枝の
+handle解決報告）は、DXF-viewer に対応するUIが無いため未移植。逆に DXF-viewer 側
+にしか無い機能（Search Boundary 用の `_label_position_for_candidate` 等、大規模
+図面向けの `_filter_eligible_labels`/`block_has_relevant_content` 性能最適化）もある。
+
+モジュール内の構成（処理パイプラインの順）:
+  1. 移植元の依存関数（自己完結化）
+  2. 設定（DEFAULT_REGION_CONFIG）
+  3. DXFジオメトリ収集（_collect_region_geometry 系）
+  4. ポリゴン・点の幾何ユーティリティ（汎用、複数セクションから使われる）
+  5. 線分処理の共通ユーティリティ（分類・クラスタリング・結合）
+  6. 図面枠検出（detect_drawing_frames）
+  7. 閉領域検出（半面探索・行き止まり枝、_detect_regions まで）
+  8. 領域名称候補（Tier付き優先順位、region_name_candidates）
+  9. ラベル座標逆引き（Search Boundary のハイライト用）
+  10. 図面回転判定（90°回転対応）
+  11. タイトルブロック除外
+  12. トップレベル解析（公開API: analyze_dxf_regions, assign_region_labels）
 """
 import ezdxf
 import gc
@@ -18,7 +36,9 @@ import re
 from utils.text_utils import clean_mtext_format_codes
 
 
-# --- 流用元の依存関数（DXF-extract-labels の extract_labels.py / common_utils.py より移植） ---
+# ============================================================
+# 1. 移植元の依存関数（DXF-extract-labels の extract_labels.py / common_utils.py より移植）
+# ============================================================
 
 # 図番フォーマット（例: EE6868-500-01C, EE6888-602-01A）
 DRAWING_NUMBER_PATTERN = r'[A-Z]{2}\d{4}-\d{3}(?:-\d{2})?[A-Z]'
@@ -79,6 +99,10 @@ def filter_non_circuit_symbols(labels):
     return matched, excluded
 
 
+# ============================================================
+# 2. 設定
+# ============================================================
+
 DEFAULT_REGION_CONFIG = {
     'frame_lineweight': 100,    # 図面枠の線の太さ
     'region_lineweight': 25,    # 領域境界線の太さ
@@ -110,6 +134,10 @@ DEFAULT_REGION_CONFIG = {
     'connection_point_margin': 0.1,    # 接続点が境界線上とみなす座標距離マージン
 }
 
+
+# ============================================================
+# 3. DXFジオメトリ収集
+# ============================================================
 
 def _is_continuous_linetype(e, doc):
     """エンティティの線種が実質的に Continuous（実線）かどうかを判定する
@@ -253,6 +281,70 @@ def _collect_region_geometry(msp, cfg):
     return frame_lines, region_lines, region_lines_lp, label_entities, connection_points
 
 
+# ============================================================
+# 4. ポリゴン・点の幾何ユーティリティ（汎用）
+# ============================================================
+
+def _polygon_area(poly):
+    s = 0.0
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        s += x1 * y2 - x2 * y1
+    return abs(s) / 2.0
+
+
+def _polygon_corners(poly, tol=0.5):
+    """ポリゴンの角（直角に折れる頂点）だけを抽出し、左下から順に並べて返す。
+
+    面探索由来の共線中間点を除去し、最も左下（最小y→最小x）の角を先頭にする。
+    """
+    n = len(poly)
+    out = []
+    for i in range(n):
+        p0 = poly[(i - 1) % n]
+        p1 = poly[i]
+        p2 = poly[(i + 1) % n]
+        cross = (p1[0] - p0[0]) * (p2[1] - p0[1]) - (p1[1] - p0[1]) * (p2[0] - p0[0])
+        if abs(cross) > tol:   # 折れ点（共線でない）→ 角
+            out.append((round(p1[0], 2), round(p1[1], 2)))
+    if not out:
+        out = [(round(x, 2), round(y, 2)) for (x, y) in poly]
+    start = min(range(len(out)), key=lambda i: (out[i][1], out[i][0]))
+    return out[start:] + out[:start]
+
+
+def _point_in_polygon(pt, poly):
+    x, y = pt
+    inside = False
+    n = len(poly)
+    j = n - 1
+    for i in range(n):
+        xi, yi = poly[i]
+        xj, yj = poly[j]
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
+def _dist_point_to_polygon(pt, poly):
+    import math as _m
+    x, y = pt
+    best = float('inf')
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        dx, dy = x2 - x1, y2 - y1
+        denom = dx * dx + dy * dy
+        t = 0.0 if denom == 0 else max(0.0, min(1.0, ((x - x1) * dx + (y - y1) * dy) / denom))
+        px, py = x1 + t * dx, y1 + t * dy
+        best = min(best, _m.hypot(x - px, y - py))
+    return best
+
+
 def _count_connection_points_on_boundary(polygon, points, margin):
     """ポリゴン境界から margin 以内にある接続点の数を返す（bbox で事前絞り込み）。"""
     xs = [p[0] for p in polygon]
@@ -266,6 +358,10 @@ def _count_connection_points_on_boundary(polygon, points, margin):
                 n += 1
     return n
 
+
+# ============================================================
+# 5. 線分処理の共通ユーティリティ（分類・クラスタリング・結合）
+# ============================================================
 
 def _split_axis_aligned(pairs, eps):
     """線分(start,end)を水平 H[(y,x0,x1)] と垂直 V[(x,y0,y1)] に分類する。"""
@@ -359,6 +455,10 @@ def _merge_collinear(items, level_tol, bridge=True, circles=None, circle_band=2.
     return out
 
 
+# ============================================================
+# 6. 図面枠検出
+# ============================================================
+
 def detect_drawing_frames(frame_lines, eps=2.0, min_side=400.0):
     """lineweight=100 の線分から図面枠（複数可）を検出する。
     枠の縦長辺が左右ペアで横並びになる前提。戻り値: [(xl,xr,y0,y1), ...]
@@ -385,17 +485,23 @@ def detect_drawing_frames(frame_lines, eps=2.0, min_side=400.0):
     return frames
 
 
-def _find_rectilinear_faces(Hm, Vm, eps):
-    """結合済み水平線 Hm[(y,x0,x1)]・垂直線 Vm[(x,y0,y1)] から閉領域(面)を列挙する。
+# ============================================================
+# 7. 閉領域検出（半面探索・行き止まり枝）
+# ============================================================
+
+def _build_planar_graph(Hm, Vm, eps):
+    """結合済み水平線 Hm[(y,x0,x1)]・垂直線 Vm[(x,y0,y1)] から、端点接続ベースの
+    平面グラフ（隣接リスト adj とノード座標 node_xy）を構築する。
 
     接続は **線分の端点が相手の線分に乗っている箇所（角・T字）のみ** で作る。
     中ほど同士の交差（どちらの端点でもない交差）では接続しない。これにより、
     コネクタ横線が矩形右辺の途中を横切るだけの箇所で誤って繋がるのを防ぐ。
-    """
-    import math as _m
+    座標は許容誤差クラスタリングで正規化する（round の境界で一致点が分裂するのを
+    防ぐ。手描きの微小ズレ、例 y=231.91 と 231.96 を同一ノードに寄せる）。
 
-    # 座標を許容誤差クラスタリングで正規化する（round の境界で一致点が分裂するのを防ぐ）。
-    # 手描きの微小ズレ（例 y=231.91 と 231.96）を同一ノードに寄せる。
+    戻り値: (adj, node_xy)。adj は {node_key: {隣接node_key, ...}} の隣接リスト
+    （無向グラフ、双方向に登録）。node_xy は {node_key: (x, y)} の実座標。
+    """
     ctol = max(eps, 0.2)
 
     def _canon_map(values):
@@ -460,6 +566,7 @@ def _find_rectilinear_faces(Hm, Vm, eps):
             k = cluster_key(x, yy)
             node_xy[k] = (x, yy)
             line_pts.setdefault(('V', vi), []).append((yy, k))
+
     adj = {}
     for pts in line_pts.values():
         pts = sorted(set(pts))
@@ -468,15 +575,31 @@ def _find_rectilinear_faces(Hm, Vm, eps):
             if ka != kb:
                 adj.setdefault(ka, set()).add(kb)
                 adj.setdefault(kb, set()).add(ka)
-    if not adj:
-        return [], []
+    return adj, node_xy
 
-    # --- 行き止まり枝（dangling edge）の除去 ---
-    # 半面探索は次数1のノードに到達すると、戻る辺が1本しかないため必ず同じ辺を
-    # 折り返す。この往復が生のポリゴンに「同じ座標が2回連続する」アーティファクトを
-    # 生む（面積には寄与しないが、頂点座標の表示を汚す）。真の境界閉路は必ず次数2
-    # 以上のノードのみで構成されるため、次数1のノードとその辺を再帰的に除去
-    # （2-core抽出）してから面探索する。
+
+def _peel_dangling_branches(adj, node_xy):
+    """次数1のノード（行き止まり）とその辺を再帰的に除去する（2-core抽出）。
+
+    半面探索は次数1のノードに到達すると、戻る辺が1本しかないため必ず同じ辺を
+    折り返す。この往復が生のポリゴンに「同じ座標が2回連続する」アーティファクトを
+    生む（面積には寄与しないが、頂点座標の表示を汚す）。真の境界閉路は必ず次数2
+    以上のノードのみで構成されるため、面探索前にここで除去する。
+
+    `adj` は呼び出し側の辞書を**直接変更**する（除去後のグラフを面探索に渡すため）。
+
+    除去した辺は「枝（連結成分）」単位にまとめて返す。1本の枝が複数の短い線分の
+    連なりで構成される場合（部品が複数回切れ目を入れている、あるいは1本の長い
+    線が途中まで領域境界として使われ残りが余剰になっている等）も、先端から
+    現存グラフへの取り付け点までを1つの枝として扱う（Union-Find で連結成分化）。
+
+    戻り値: [{'edges': [(座標, 座標), ...], 'attachment': 座標 | None}, ...]
+
+    DXF-viewer 側はこの戻り値（行き止まり枝の handle 解決・UI 表示）を消費しない
+    （Search Boundary に対応するUIが無いため）が、面探索アルゴリズム本体（2-core
+    抽出による頂点重複アーティファクトの除去）は DXF-extract-labels と同一に保つ
+    必要があるため、戻り値の計算自体は省略しない。
+    """
     peeled_pairs = []  # (leaf_key, other_key)、除去順
     changed = True
     while changed:
@@ -494,43 +617,46 @@ def _find_rectilinear_faces(Hm, Vm, eps):
             del adj[leaf]
             changed = True
 
-    # 除去した辺を「枝（連結成分）」単位にまとめる。1本の枝が複数の短い線分の
-    # 連なりで構成される場合（部品が複数回切れ目を入れている、あるいは1本の長い
-    # 線が途中まで領域境界として使われ残りが余剰になっている等）も、先端から
-    # 現存グラフへの取り付け点までを1つの枝として扱う（Union-Find で連結成分化）。
+    if not peeled_pairs:
+        return []
+
+    parent = {}
+
+    def _uf_find(x):
+        while parent.get(x, x) != x:
+            x = parent[x]
+        return x
+
+    def _uf_union(a, b):
+        ra, rb = _uf_find(a), _uf_find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for a, b in peeled_pairs:
+        parent.setdefault(a, a)
+        parent.setdefault(b, b)
+        _uf_union(a, b)
+
+    groups = {}
+    for a, b in peeled_pairs:
+        groups.setdefault(_uf_find(a), []).append((a, b))
+
     dangling_branches = []
-    if peeled_pairs:
-        parent = {}
+    for edges in groups.values():
+        keys = {k for ab in edges for k in ab}
+        attach_keys = [k for k in keys if k in adj]
+        dangling_branches.append({
+            'edges': [(node_xy[a], node_xy[b]) for a, b in edges],
+            'attachment': node_xy[attach_keys[0]] if attach_keys else None,
+        })
+    return dangling_branches
 
-        def _uf_find(x):
-            while parent.get(x, x) != x:
-                x = parent[x]
-            return x
 
-        def _uf_union(a, b):
-            ra, rb = _uf_find(a), _uf_find(b)
-            if ra != rb:
-                parent[ra] = rb
-
-        for a, b in peeled_pairs:
-            parent.setdefault(a, a)
-            parent.setdefault(b, b)
-            _uf_union(a, b)
-
-        groups = {}
-        for a, b in peeled_pairs:
-            groups.setdefault(_uf_find(a), []).append((a, b))
-
-        for edges in groups.values():
-            keys = {k for ab in edges for k in ab}
-            attach_keys = [k for k in keys if k in adj]
-            dangling_branches.append({
-                'edges': [(node_xy[a], node_xy[b]) for a, b in edges],
-                'attachment': node_xy[attach_keys[0]] if attach_keys else None,
-            })
-
-    if not adj:
-        return [], dangling_branches
+def _trace_faces(adj, node_xy):
+    """2-core抽出済みの平面グラフ（adj, node_xy）から、半面探索で閉領域(面)を
+    列挙する。各面は次数2以上のノードのみで構成される閉路（半面探索＝各有向辺を
+    1回ずつ辿り、各ノードで「来た方向の直前（角度順で1つ前）」の隣接辺へ進む）。"""
+    import math as _m
 
     def ang(a, b):
         ax, ay = node_xy[a]
@@ -560,99 +686,25 @@ def _find_rectilinear_faces(Hm, Vm, eps):
                     break
             if ok and len(face) >= 4:
                 faces.append(face)
+    return faces
+
+
+def _find_rectilinear_faces(Hm, Vm, eps):
+    """結合済み水平線 Hm[(y,x0,x1)]・垂直線 Vm[(x,y0,y1)] から閉領域(面)と
+    行き止まり枝を求める。
+
+    `_build_planar_graph`（平面グラフ構築）→ `_peel_dangling_branches`
+    （行き止まり枝の除去・連結成分化）→ `_trace_faces`（半面探索）の3段の
+    オーケストレーション。戻り値: (faces, dangling_branches)。
+    """
+    adj, node_xy = _build_planar_graph(Hm, Vm, eps)
+    if not adj:
+        return [], []
+    dangling_branches = _peel_dangling_branches(adj, node_xy)
+    if not adj:
+        return [], dangling_branches
+    faces = _trace_faces(adj, node_xy)
     return faces, dangling_branches
-
-
-def _polygon_area(poly):
-    s = 0.0
-    n = len(poly)
-    for i in range(n):
-        x1, y1 = poly[i]
-        x2, y2 = poly[(i + 1) % n]
-        s += x1 * y2 - x2 * y1
-    return abs(s) / 2.0
-
-
-def _polygon_corners(poly, tol=0.5):
-    """ポリゴンの角（直角に折れる頂点）だけを抽出し、左下から順に並べて返す。
-
-    面探索由来の共線中間点を除去し、最も左下（最小y→最小x）の角を先頭にする。
-    """
-    n = len(poly)
-    out = []
-    for i in range(n):
-        p0 = poly[(i - 1) % n]
-        p1 = poly[i]
-        p2 = poly[(i + 1) % n]
-        cross = (p1[0] - p0[0]) * (p2[1] - p0[1]) - (p1[1] - p0[1]) * (p2[0] - p0[0])
-        if abs(cross) > tol:   # 折れ点（共線でない）→ 角
-            out.append((round(p1[0], 2), round(p1[1], 2)))
-    if not out:
-        out = [(round(x, 2), round(y, 2)) for (x, y) in poly]
-    start = min(range(len(out)), key=lambda i: (out[i][1], out[i][0]))
-    return out[start:] + out[:start]
-
-
-def _point_in_polygon(pt, poly):
-    x, y = pt
-    inside = False
-    n = len(poly)
-    j = n - 1
-    for i in range(n):
-        xi, yi = poly[i]
-        xj, yj = poly[j]
-        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi):
-            inside = not inside
-        j = i
-    return inside
-
-
-def _dist_point_to_polygon(pt, poly):
-    import math as _m
-    x, y = pt
-    best = float('inf')
-    n = len(poly)
-    for i in range(n):
-        x1, y1 = poly[i]
-        x2, y2 = poly[(i + 1) % n]
-        dx, dy = x2 - x1, y2 - y1
-        denom = dx * dx + dy * dy
-        t = 0.0 if denom == 0 else max(0.0, min(1.0, ((x - x1) * dx + (y - y1) * dy) / denom))
-        px, py = x1 + t * dx, y1 + t * dy
-        best = min(best, _m.hypot(x - px, y - py))
-    return best
-
-
-def _group_labels_by_text(labels):
-    """テキスト→座標リスト [(x,y), ...] の辞書を返す（同名ラベルが複数ある場合に対応）。
-
-    `_label_position_for_candidate()` が同名ラベル群から最も近いものを選ぶ際に、
-    毎回 `labels` 全体を線形走査しなくて済むよう、1フレーム分の `frame_labels`
-    に対して一度だけ構築して再利用する。
-    """
-    grouped = {}
-    for (t, x, y) in labels:
-        grouped.setdefault(t, []).append((x, y))
-    return grouped
-
-
-def _label_position_for_candidate(text, polygon, positions_by_text):
-    """name_candidates のテキストに対応する元ラベルの座標 (x, y) を返す。
-
-    `region_name_candidates()` はテキストのみ返す（座標を持ち出すと流用元の
-    アルゴリズムと出力契約が変わってしまうため）。同じテキストのラベルが複数
-    （他領域の同名ラベル等）ある場合は、このポリゴンに最も近いものを採用する。
-    DXF-viewer の Search Boundary が、マッチしたラベル本体をハイライトする際に
-    実体（TEXT/MTEXT エンティティ）の位置を特定するために使う。
-
-    `positions_by_text` は `_group_labels_by_text()` の戻り値（テキスト→座標
-    リスト）。同名ラベルの件数分だけを見れば済むため、全ラベルを毎回走査する
-    より高速。
-    """
-    candidates = positions_by_text.get(text)
-    if not candidates:
-        return None
-    return min(candidates, key=lambda p: _dist_point_to_polygon(p, polygon))
 
 
 def _detect_regions(RH, RV, frame, frame_area, cfg, labels=None, circles=None):
@@ -712,6 +764,10 @@ def _detect_regions(RH, RV, frame, frame_area, cfg, labels=None, circles=None):
         regions.append({'polygon': f, 'area': a})
     return regions
 
+
+# ============================================================
+# 8. 領域名称候補（Tier付き優先順位）
+# ============================================================
 
 def _count_letters(s):
     return sum(1 for ch in s if ch.isascii() and ch.isalpha())
@@ -842,6 +898,10 @@ def region_name_candidates(polygon, labels, max_dist=10.0, min_dist=1.0, min_let
     `_eligible_labels` は `_filter_eligible_labels()` の結果を呼び出し側が
     キャッシュ済みの場合に渡す内部最適化用の引数（省略時はこの関数内で計算する
     ため、外部から呼ぶ場合は省略してよく、結果は変わらない）。
+
+    DXF-extract-labels 版と異なり、`tier_by_text`（採用Tierの辞書）は返さない。
+    DXF-viewer には領域名称選択UIが無く、Tier に基づく同期抑制（同UIの機能）に
+    対応するものが無いため。
     """
     eligible = _eligible_labels
     if eligible is None:
@@ -893,6 +953,46 @@ def region_name_candidates(polygon, labels, max_dist=10.0, min_dist=1.0, min_let
             break
     return out
 
+
+# ============================================================
+# 9. ラベル座標逆引き（Search Boundary のハイライト用、DXF-viewer 独自）
+# ============================================================
+
+def _group_labels_by_text(labels):
+    """テキスト→座標リスト [(x,y), ...] の辞書を返す（同名ラベルが複数ある場合に対応）。
+
+    `_label_position_for_candidate()` が同名ラベル群から最も近いものを選ぶ際に、
+    毎回 `labels` 全体を線形走査しなくて済むよう、1フレーム分の `frame_labels`
+    に対して一度だけ構築して再利用する。
+    """
+    grouped = {}
+    for (t, x, y) in labels:
+        grouped.setdefault(t, []).append((x, y))
+    return grouped
+
+
+def _label_position_for_candidate(text, polygon, positions_by_text):
+    """name_candidates のテキストに対応する元ラベルの座標 (x, y) を返す。
+
+    `region_name_candidates()` はテキストのみ返す（座標を持ち出すと流用元の
+    アルゴリズムと出力契約が変わってしまうため）。同じテキストのラベルが複数
+    （他領域の同名ラベル等）ある場合は、このポリゴンに最も近いものを採用する。
+    DXF-viewer の Search Boundary が、マッチしたラベル本体をハイライトする際に
+    実体（TEXT/MTEXT エンティティ）の位置を特定するために使う。
+
+    `positions_by_text` は `_group_labels_by_text()` の戻り値（テキスト→座標
+    リスト）。同名ラベルの件数分だけを見れば済むため、全ラベルを毎回走査する
+    より高速。
+    """
+    candidates = positions_by_text.get(text)
+    if not candidates:
+        return None
+    return min(candidates, key=lambda p: _dist_point_to_polygon(p, polygon))
+
+
+# ============================================================
+# 10. 図面回転判定（90°回転対応）
+# ============================================================
 
 def _label_rotation_angle(entity):
     """ラベルエンティティの実効回転角(度, 0-180で正規化前)を返す。
@@ -971,6 +1071,10 @@ def _rotated_edge_roles(label_entities, threshold=0.5):
     return None
 
 
+# ============================================================
+# 11. タイトルブロック除外
+# ============================================================
+
 def _is_titleblock_region(polygon, labels):
     """領域内に図番パターンとタイトル系語が同居していれば図番枠とみなす。"""
     has_dn = False
@@ -996,6 +1100,70 @@ def _is_titleblock_region(polygon, labels):
         if has_dn and has_term:
             return True
     return False
+
+
+# ============================================================
+# 12. トップレベル解析（公開API）
+# ============================================================
+
+def _run_region_detection(lines, det_cfg, frames, frame_area, frame_labels,
+                          connection_points, rotated_edge_roles, labels_by_text):
+    """lines から H/V 分類 → 図面枠ごとの候補面リストを返す。`analyze_dxf_regions`
+    の3パス検出（LINEのみ→LWPOLYLINE追加→横ギャップ橋渡し）が、それぞれこの
+    関数を1回呼んで結果を得る。
+
+    ラベル単位フィルタ（英字数・小文字・除外語・機器符号）は領域に依存せず
+    `det_cfg` と `frame_labels` だけで決まるため、領域ループの外で一度だけ
+    計算する（領域数に比例した正規表現の再評価を避ける最大のボトルネック対策）。
+    """
+    RH, RV = _split_axis_aligned(lines, det_cfg['snap'])
+    eligible_labels = _filter_eligible_labels(
+        frame_labels, det_cfg['name_min_letters'], det_cfg['name_exclude_lowercase'],
+        det_cfg['name_exclude_terms'], det_cfg['exclude_circuit_symbols'],
+        det_cfg.get('circuit_symbol_keep_terms', ('RACK',)))
+    fc = []
+    for fi, frame in enumerate(frames):
+        cands_list = []
+        for reg in _detect_regions(RH, RV, frame, frame_area, det_cfg, frame_labels,
+                                   connection_points):
+            if det_cfg['exclude_titleblock'] and _is_titleblock_region(reg['polygon'], frame_labels):
+                continue
+            if det_cfg['exclude_connection_point_regions']:
+                cp = _count_connection_points_on_boundary(
+                    reg['polygon'], connection_points, det_cfg['connection_point_margin'])
+                if cp >= det_cfg['connection_point_threshold']:
+                    continue
+            ncands = region_name_candidates(
+                reg['polygon'], frame_labels,
+                max_dist=det_cfg['name_max_dist'], min_dist=det_cfg['name_min_dist'],
+                min_letters=det_cfg['name_min_letters'],
+                rotated_edge_roles=rotated_edge_roles,
+                exclude_circuit_symbols=det_cfg['exclude_circuit_symbols'],
+                exclude_terms=det_cfg['name_exclude_terms'],
+                exclude_lowercase=det_cfg['name_exclude_lowercase'],
+                circuit_keep_terms=det_cfg.get('circuit_symbol_keep_terms', ('RACK',)),
+                _eligible_labels=eligible_labels)
+            name_positions = {}
+            for _d, text in ncands:
+                pos = _label_position_for_candidate(text, reg['polygon'], labels_by_text)
+                if pos:
+                    name_positions[text] = pos
+            cands_list.append({
+                'polygon': reg['polygon'], 'area': reg['area'],
+                'name_candidates': ncands,
+                'default_name': ncands[0][1] if ncands else '',
+                'name_candidate_positions': name_positions,
+            })
+        fc.append(cands_list)
+    return fc
+
+
+def _count_threshold_hits(frame_cands, single_thr):
+    """`frame_cands`（`_run_region_detection` の戻り値）のうち、面積が
+    `single_thr` 以上の候補数を返す。`analyze_dxf_regions` の3パス検出で、十分な
+    候補が見つかったか（＝次のフォールバックパスへ進む必要があるか）の判定に使う。
+    """
+    return sum(1 for cl in frame_cands for cf in cl if cf['area'] >= single_thr)
 
 
 def analyze_dxf_regions(dxf_file, config=None):
@@ -1056,67 +1224,22 @@ def analyze_dxf_regions(dxf_file, config=None):
         # 辞書は一度だけ構築して再利用する（_label_position_for_candidate 用）。
         labels_by_text = _group_labels_by_text(frame_labels)
 
-        def _run_detection(lines, det_cfg):
-            """lines から H/V 分類 → 候補面リストを返す内部ヘルパー。"""
-            RH, RV = _split_axis_aligned(lines, det_cfg['snap'])
-            # ラベル単位フィルタ（英字数・小文字・除外語・機器符号）は領域に依存せず
-            # det_cfg と frame_labels だけで決まるため、領域ループの外で一度だけ計算する
-            # （領域数に比例した正規表現の再評価を避ける最大のボトルネック対策）。
-            eligible_labels = _filter_eligible_labels(
-                frame_labels, det_cfg['name_min_letters'], det_cfg['name_exclude_lowercase'],
-                det_cfg['name_exclude_terms'], det_cfg['exclude_circuit_symbols'],
-                det_cfg.get('circuit_symbol_keep_terms', ('RACK',)))
-            fc = []
-            for fi, frame in enumerate(frames):
-                cands_list = []
-                for reg in _detect_regions(RH, RV, frame, frame_area, det_cfg, frame_labels,
-                                           connection_points):
-                    if det_cfg['exclude_titleblock'] and _is_titleblock_region(reg['polygon'], frame_labels):
-                        continue
-                    if det_cfg['exclude_connection_point_regions']:
-                        cp = _count_connection_points_on_boundary(
-                            reg['polygon'], connection_points, det_cfg['connection_point_margin'])
-                        if cp >= det_cfg['connection_point_threshold']:
-                            continue
-                    ncands = region_name_candidates(
-                        reg['polygon'], frame_labels,
-                        max_dist=det_cfg['name_max_dist'], min_dist=det_cfg['name_min_dist'],
-                        min_letters=det_cfg['name_min_letters'],
-                        rotated_edge_roles=rotated_edge_roles,
-                        exclude_circuit_symbols=det_cfg['exclude_circuit_symbols'],
-                        exclude_terms=det_cfg['name_exclude_terms'],
-                        exclude_lowercase=det_cfg['name_exclude_lowercase'],
-                        circuit_keep_terms=det_cfg.get('circuit_symbol_keep_terms', ('RACK',)),
-                        _eligible_labels=eligible_labels)
-                    name_positions = {}
-                    for _d, text in ncands:
-                        pos = _label_position_for_candidate(text, reg['polygon'], labels_by_text)
-                        if pos:
-                            name_positions[text] = pos
-                    cands_list.append({
-                        'polygon': reg['polygon'], 'area': reg['area'],
-                        'name_candidates': ncands,
-                        'default_name': ncands[0][1] if ncands else '',
-                        'name_candidate_positions': name_positions,
-                    })
-                fc.append(cands_list)
-            return fc
-
-        def _hits(fc):
-            return sum(1 for cl in fc for cf in cl if cf['area'] >= single_thr)
-
         # 1) LINE のみで領域検出を試みる
         lines_for_detection = region_lines
-        frame_cands = _run_detection(lines_for_detection, cfg)
+        frame_cands = _run_region_detection(
+            lines_for_detection, cfg, frames, frame_area, frame_labels,
+            connection_points, rotated_edge_roles, labels_by_text)
 
         # LINE だけで閾値超え候補がゼロで LWPOLYLINE 境界線もある場合、
         # LWPOLYLINE を追加して再検出する（例: EE6888-631-01A.dxf など境界が
         # LWPOLYLINE で描かれた図面への対応）。
         # LINE でも十分な候補がある図面（例: EE6888-602-01A.dxf）では LWPOLYLINE を
         # 追加しない（小部品の LWPOLYLINE が境界線の corner-partner 判定を誤らせる）。
-        if _hits(frame_cands) == 0 and region_lines_lp:
+        if _count_threshold_hits(frame_cands, single_thr) == 0 and region_lines_lp:
             lines_for_detection = region_lines + region_lines_lp
-            frame_cands = _run_detection(lines_for_detection, cfg)
+            frame_cands = _run_region_detection(
+                lines_for_detection, cfg, frames, frame_area, frame_labels,
+                connection_points, rotated_edge_roles, labels_by_text)
 
         # それでも閾値超え候補がゼロ、かつラベルの過半数が90°回転している（=図面全体が
         # 90°回転して描かれている）場合のみ、横線分のギャップ橋渡しを有効にして再検出する
@@ -1124,10 +1247,12 @@ def analyze_dxf_regions(dxf_file, config=None):
         # 回転判定を条件に加えるのは、通常向きの図面で「単に検出ゼロ件だったから」を
         # トリガーに横線分も橋渡ししてしまうと、無関係な隣接矩形を誤って結合する副作用が
         # あるため（`_is_globally_rotated` 参照）。
-        if _hits(frame_cands) == 0 and rotated:
+        if _count_threshold_hits(frame_cands, single_thr) == 0 and rotated:
             cfg_h_bridge = dict(cfg)
             cfg_h_bridge['bridge_horizontal_gaps'] = True
-            frame_cands = _run_detection(lines_for_detection, cfg_h_bridge)
+            frame_cands = _run_region_detection(
+                lines_for_detection, cfg_h_bridge, frames, frame_area, frame_labels,
+                connection_points, rotated_edge_roles, labels_by_text)
 
         # 2) 第1図面（最左フレーム）で「同名複数ピース合算>=group_thr」となる名称を
         #    ターゲットとする（MPD RACK2 のように2矩形で合算が閾値超のケース）。
