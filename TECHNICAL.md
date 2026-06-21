@@ -212,6 +212,32 @@ DXF-viewer 独自のツールバー／メニューで代替できる。
   LWPOLYLINE/lw=25/color=2 で描かれており、これを境界線に混ぜると水平辺が縦境界線の
   corner-partner 判定を誤らせ gap-bridging を妨げる。LINE 優先で十分な図面では
   LWPOLYLINE を混入しないことで、この干渉を回避する。
+
+  **行き止まり枝（dangling edge）の除去（2026-06-21 追加・DXF-extract-labels から移植）**
+
+  境界線と同じ線種（lineweight=25/color=2）を持ちながら、どこにも閉じていない線分
+  （次数1のノードに繋がる枝）があると、`_find_rectilinear_faces()` の半面探索は
+  その枝を折り返すしかなく（次数1のノードでは戻る辺が1本しかないため）、生の
+  ポリゴンに「同じ頂点が2回連続する」アーティファクトを生む（実例:
+  `EE6313-546-01E.dxf` の `頂点の座標` リストに `(660.53, 129.56)` が2回連続して
+  現れる不具合として報告。原因は handle `214F`/`2199` の2本の短い枝線が、本来
+  繋がるべき相手まで約5単位届かず行き止まりになっていたこと）。
+
+  対策として、面探索前に次数1のノードとその辺を再帰的に除去する2-core抽出を
+  `_find_rectilinear_faces()` に追加した（戻り値が `faces` 単独から
+  `(faces, dangling_edges)` に変更。DXF-viewer は `dangling_edges` を使わず破棄
+  するが、戻り値の形は DXF-extract-labels と揃えている）。
+
+  **副次効果（同一領域の重複検出バグも解消）**: 行き止まり枝の往復は面積には
+  正味ゼロしか寄与しないため、同一の物理境界が「綺麗な内側面」と「枝の往復で
+  座標が汚れ bounding box が変わった外側面」の2つの別領域として重複検出される
+  ケースがあった（座標の汚れにより既存の bbox 重複除外をすり抜けていた）。
+  除去後は両者が同一 bbox になり正しく1領域に統合される
+  （`EE6313-546-01E.dxf`: regions 6→5。`DE5434-553-10B.dxf`: regions 9→8。
+  汚れた版は迂回経路上の無関係なラベル `SB-1A(L1)` 等まで誤って名称候補に
+  取り込んでいたため、名称候補も正しくなった）。
+  `tests/regression/test_region_search.py` の `DE5434-553-10B.dxf` 期待値を
+  `min_regions` 9→8 に更新済み。他サンプルの検出結果は変化なし。
 - **マッチ**: `RegionSearchManager.find_matching_regions()` が入力名称を各領域の
   `name_candidates`（`default_name` は常にその先頭要素なので別チェック不要）と照合
   （case sensitive / whole word 対応）。戻り値は `analysis['regions']` 各要素の浅いコピー
@@ -356,4 +382,4 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-06-18（Search Boundary の90°回転図面対応を DXF-extract-labels から移植 + マッチしたラベル本体の色書換えハイライトを追加 + analyze_dxf_regions のラベル前計算によるパフォーマンス最適化）*
+*最終更新: 2026-06-21（閉領域検出で行き止まり枝を除去し頂点座標の重複アーティファクト・領域重複検出バグを解消）*
