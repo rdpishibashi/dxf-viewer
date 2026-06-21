@@ -41,21 +41,30 @@ class RegionSearchManager:
 
     @staticmethod
     def find_matching_regions(analysis, query, case_sensitive=False, whole_word=False):
-        """Return the region dicts whose name matches ``query``.
+        """Return the region dicts whose top-priority name matches ``query``.
 
-        A region matches when ``query`` is found in any of its
-        ``name_candidates`` texts (``default_name`` is always the first
-        candidate, so it does not need a separate check), honoring the
+        A region matches when ``query`` matches its ``default_name`` — the
+        single highest-priority candidate selected by
+        ``region_detector.region_name_candidates()``'s tier ranking (1: nearest
+        bottom edge / right edge when rotated, 2: nearest top edge / left edge
+        when rotated, 3: nearest point on the boundary overall) — honoring the
         case-sensitivity and whole-word options (same semantics as the text
         search).
 
+        Only the top candidate is checked, not the full ``name_candidates``
+        list: that list records every nearby label as a fuzzy, distance-ranked
+        guess, so nested/adjacent regions can each list the other's name too
+        (e.g. in ``EE6313-546-01E.dxf``, the outer ``B CHAMBER`` region and the
+        fully contained ``BAKE HEATER UNIT RX`` region each have both names as
+        candidates). Matching only the top-ranked one ties the highlighted
+        boundary to the name actually assigned to that region.
+
         Each returned region is a shallow copy of the corresponding entry in
-        ``analysis['regions']`` with an extra ``matched_labels`` key: a list of
-        ``(text, x, y)`` tuples for the specific candidate texts that matched
-        the query, using the coordinates recorded in
-        ``name_candidate_positions``. The UI layer uses these coordinates to
-        highlight the matched label entity itself, not just the region
-        boundary.
+        ``analysis['regions']`` with an extra ``matched_labels`` key: a single
+        ``(text, x, y)`` tuple for the matched name, using the coordinates
+        recorded in ``name_candidate_positions``. The UI layer uses this
+        coordinate to highlight the matched label entity itself, not just the
+        region boundary.
 
         Args:
             analysis: Result of :func:`analyze_dxf_regions`.
@@ -77,17 +86,12 @@ class RegionSearchManager:
 
         matched = []
         for region in analysis.get('regions', []):
-            positions = region.get('name_candidate_positions', {})
-            matched_labels = []
-            for _dist, text in region.get('name_candidates', []):
-                if not RegionSearchManager._name_matches(text, needle, regex, case_sensitive):
-                    continue
-                pos = positions.get(text)
-                if pos:
-                    matched_labels.append((text, pos[0], pos[1]))
-
-            if matched_labels:
-                matched.append(dict(region, matched_labels=matched_labels))
+            text = region.get('default_name', '')
+            if not text or not RegionSearchManager._name_matches(text, needle, regex, case_sensitive):
+                continue
+            pos = region.get('name_candidate_positions', {}).get(text)
+            matched_labels = [(text, pos[0], pos[1])] if pos else []
+            matched.append(dict(region, matched_labels=matched_labels))
         return matched
 
     @staticmethod

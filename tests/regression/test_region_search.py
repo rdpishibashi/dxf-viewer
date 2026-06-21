@@ -53,9 +53,19 @@ EXPECTED = {
         'frames': 1,
         'min_regions': 4,
         'queries': {
-            # 'SYSTEM' matches 4: 2 regions named 'SYSTEM I/F BOX' + 2 'SB-1A' regions
-            # that list 'SYSTEM I/F BOX' as a name candidate.
-            ('SYSTEM', False, False): 4,
+            # 'SYSTEM' matches the 2 regions actually named 'SYSTEM I/F BOX'
+            # only. The 2 'SB-1A' regions used to list 'SYSTEM I/F BOX' as a
+            # secondary name candidate too (at a larger distance, from a label
+            # that sits outside their own polygon), making this query match 4
+            # before 2026-06-21: find_matching_regions() now matches only a
+            # region's default_name (its own top-priority candidate), and
+            # region_name_candidates()'s Tier1/2 now require the label to be
+            # inside the region's own polygon (see region_detector.py;
+            # DXF-extract-labels-reported bug where an outside label
+            # 'EFEM UPPER' incorrectly outranked the correct inside label
+            # 'CONTROL BOX CORE FX' in DE5434-553-10B.dxf revealed the same
+            # outside-label leakage here).
+            ('SYSTEM', False, False): 2,
             ('SB-1A', False, False): 2,
             ('nonexist', False, False): 0,
         },
@@ -64,7 +74,7 @@ EXPECTED = {
         'frames': 1,
         'min_regions': 4,
         'queries': {
-            ('SYSTEM', False, False): 4,
+            ('SYSTEM', False, False): 2,  # see EE6888-631-01A.dxf comment above
             ('SB-1A', False, False): 2,
             ('nonexist', False, False): 0,
         },
@@ -87,6 +97,23 @@ EXPECTED = {
             ('LA CHAMBER', False, False): 3,
             ('CONTROL BOX CORE FX', False, False): 2,
             ('CONTROL BOX CORE RX', False, False): 2,
+            ('NONEXIST', False, False): 0,
+        },
+    },
+    # B CHAMBER (outer) and BAKE HEATER UNIT RX (inner, fully contained) each
+    # used to list both names as candidates (the other's label sits within
+    # max_dist of their own Tier1/2 edge too), so searching either name
+    # highlighted both boundaries even though they don't share a wall
+    # (reported 2026-06-21). find_matching_regions() matching only
+    # default_name fixes this: each region's own label is closer than the
+    # other's, so each keeps the correct top candidate.
+    'EE6313-546-01E.dxf': {
+        'frames': 1,
+        'min_regions': 4,
+        'queries': {
+            ('B CHAMBER', False, False): 1,
+            ('BAKE HEATER UNIT RX', False, False): 1,
+            ('MX CHAMBER', False, False): 2,
             ('NONEXIST', False, False): 0,
         },
     },
