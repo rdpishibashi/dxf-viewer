@@ -111,6 +111,22 @@ DEFAULT_REGION_CONFIG = {
 }
 
 
+def _is_continuous_linetype(e, doc):
+    """エンティティの線種が実質的に Continuous（実線）かどうかを判定する
+    （DXF-extract-labels から移植）。
+
+    PHANTOM（二点鎖線）等の装飾的な線種は、lineweight/color が境界線条件
+    （region_lineweight/region_color）に一致していても、実際の閉領域の壁を
+    表すものではない。`linetype='ByLayer'` の場合はレイヤーの既定線種まで
+    解決する。
+    """
+    lt = (getattr(e.dxf, 'linetype', None) or 'BYLAYER').upper()
+    if lt == 'BYLAYER':
+        layer = doc.layers.get(e.dxf.layer) if doc else None
+        lt = (layer.dxf.linetype if layer else 'CONTINUOUS').upper()
+    return lt == 'CONTINUOUS'
+
+
 def _collect_region_geometry(msp, cfg):
     """msp を1回走査し、INSERT も展開して、図面枠線・領域境界線・テキスト・
     接続点（CIRCLE を含むブロックの INSERT 位置）を収集する。"""
@@ -182,7 +198,8 @@ def _collect_region_geometry(msp, cfg):
         lw = getattr(e.dxf, 'lineweight', None)
         if lw == flw:
             frame_lines.append((e.dxf.start, e.dxf.end))
-        elif lw == rlw and getattr(e.dxf, 'color', None) == rcol:
+        elif (lw == rlw and getattr(e.dxf, 'color', None) == rcol
+              and _is_continuous_linetype(e, doc)):
             region_lines.append((e.dxf.start, e.dxf.end))
 
     region_lines_lp = []  # LWPOLYLINE 由来の境界線（LINE と分離して収集）
@@ -190,7 +207,8 @@ def _collect_region_geometry(msp, cfg):
     def handle_lwpolyline_lp(e):
         """LWPOLYLINE の辺を LINE 相当として収集する（別リストへ）。"""
         lw = getattr(e.dxf, 'lineweight', None)
-        if lw != rlw or getattr(e.dxf, 'color', None) != rcol:
+        if (lw != rlw or getattr(e.dxf, 'color', None) != rcol
+                or not _is_continuous_linetype(e, doc)):
             return
         try:
             pts = list(e.get_points())  # (x, y, bulge, start_width, end_width)
