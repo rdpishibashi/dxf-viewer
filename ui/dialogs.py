@@ -254,7 +254,7 @@ class BoundarySearchDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Search Boundary in DXF")
         self.setModal(True)
-        self.resize(400, 340)
+        self.resize(420, 460)
 
         layout = QVBoxLayout(self)
 
@@ -277,6 +277,26 @@ class BoundarySearchDialog(QDialog):
 
         search_group.setLayout(search_layout)
         layout.addWidget(search_group)
+
+        # Vertex-coordinate input (alternative to name search)
+        corners_group = QGroupBox("Or Search by Vertex Coordinates")
+        corners_layout = QVBoxLayout()
+
+        self.corners_input = QTextEdit()
+        self.corners_input.setPlaceholderText(
+            "Paste a vertex list copied from DXF-extract-labels's region\n"
+            "popover, e.g.:\n"
+            "1: (185.19, 23.07)\n"
+            "2: (634.21, 23.07)\n"
+            "3: (634.21, 104.00)\n..."
+        )
+        self.corners_input.setMaximumHeight(100)
+        corners_layout.addWidget(self.corners_input)
+        corners_layout.addWidget(QLabel(
+            "When coordinates are given, the name search above is ignored."))
+
+        corners_group.setLayout(corners_layout)
+        layout.addWidget(corners_group)
 
         # Non-matching entity color selection
         color_group = QGroupBox("Non-matching Entity Color")
@@ -324,6 +344,7 @@ class BoundarySearchDialog(QDialog):
         """Get boundary search parameters."""
         return {
             'text': self.search_input.text(),
+            'corners_text': self.corners_input.toPlainText(),
             'case_sensitive': self.case_sensitive_check.isChecked(),
             'whole_word': self.whole_word_check.isChecked(),
             'dim_color': self.get_selected_dim_color(),

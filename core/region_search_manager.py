@@ -9,6 +9,7 @@ Highlighting itself (scene overlays, dimming) is performed by the UI layer; this
 module only supplies the geometry/name matching.
 """
 
+import math
 import re
 
 from core.region_detector import analyze_dxf_regions
@@ -95,3 +96,80 @@ class RegionSearchManager:
             return regex.search(name) is not None
         haystack = name if case_sensitive else name.lower()
         return needle in haystack
+
+    @staticmethod
+    def parse_corner_list(text):
+        """Parse a pasted vertex-coordinate list into a list of (x, y) tuples.
+
+        Accepts the format shown by DXF-extract-labels's region popover
+        ("頂点の座標（左下から / N点）"), one vertex per line, e.g.::
+
+            1: (185.19, 23.07)
+            2: (634.21, 23.07)
+
+        The leading index and parentheses are tolerated but not required; any
+        line containing two comma-separated numbers is parsed, others are
+        skipped (so stray header/blank lines copied along with the list do
+        not break parsing).
+
+        Args:
+            text: Raw pasted text.
+
+        Returns:
+            List of (x, y) float tuples, in the order they appear in the text.
+        """
+        points = []
+        for line in (text or '').splitlines():
+            m = re.search(r'(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)', line)
+            if m:
+                points.append((float(m.group(1)), float(m.group(2))))
+        return points
+
+    @staticmethod
+    def find_region_by_corners(analysis, corners, tol=0.15):
+        """Return the region (if any) whose polygon corners match ``corners``.
+
+        ``corners`` is typically the output of :meth:`parse_corner_list` fed
+        from a vertex list copied out of DXF-extract-labels's region popover.
+        Matching against each region's own ``corners`` (``_polygon_corners()``
+        output) is order- and rotation-independent — it only requires the same
+        point count and a one-to-one assignment where every given point lies
+        within ``tol`` of a distinct region corner — so it tolerates the
+        2-decimal rounding in the pasted text as well as any incidental
+        difference in winding/start-point between the two tools (both run the
+        same corner-extraction algorithm on the same source file, but this
+        keeps the match robust even if that ever drifts).
+
+        Args:
+            analysis: Result of :func:`analyze_dxf_regions`.
+            corners: List of (x, y) tuples to match.
+            tol: Maximum per-point distance (DXF units) to count as a match.
+
+        Returns:
+            A list with the single matching region dict (shallow copy, for
+            symmetry with :meth:`find_matching_regions`'s return type), or an
+            empty list when no region matches.
+        """
+        if not analysis or not corners:
+            return []
+
+        for region in analysis.get('regions', []):
+            if RegionSearchManager._corners_match(corners, region.get('corners', []), tol):
+                return [dict(region)]
+        return []
+
+    @staticmethod
+    def _corners_match(given, region_corners, tol):
+        if len(given) != len(region_corners) or not given:
+            return False
+        remaining = list(region_corners)
+        for (px, py) in given:
+            best_idx, best_dist = None, None
+            for i, (qx, qy) in enumerate(remaining):
+                dist = math.hypot(px - qx, py - qy)
+                if best_dist is None or dist < best_dist:
+                    best_idx, best_dist = i, dist
+            if best_idx is None or best_dist > tol:
+                return False
+            remaining.pop(best_idx)
+        return True

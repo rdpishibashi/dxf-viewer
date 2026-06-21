@@ -141,7 +141,51 @@ def check_file(path):
                           f"{(text, x, y)!r} does not resolve to a modelspace entity")
                     ok = False
 
+    ok = check_corner_search(name, analysis) and ok
+
     print(f"{name}: {'OK' if ok else 'FAIL'} (frames={frames}, regions={regions})")
+    return ok
+
+
+def check_corner_search(name, analysis):
+    """Round-trip: format a region's corners like DXF-extract-labels's
+    popover ("頂点の座標"), parse it back, and confirm it resolves to that
+    same region (and only that region).
+    """
+    ok = True
+    regions = analysis.get('regions', [])
+    # A handful of regions is enough to exercise the round-trip without
+    # making this regression test slow on files with many regions.
+    for region in regions[:5]:
+        corners = region.get('corners', [])
+        if not corners:
+            continue
+        text = '\n'.join(f"{i + 1}: ({x:.2f}, {y:.2f})" for i, (x, y) in enumerate(corners))
+
+        parsed = RegionSearchManager.parse_corner_list(text)
+        if parsed != [(round(x, 2), round(y, 2)) for (x, y) in corners]:
+            print(f"{name}: FAIL parse_corner_list round-trip mismatch for "
+                  f"region id={region['id']}")
+            ok = False
+            continue
+
+        matched = RegionSearchManager.find_region_by_corners(analysis, parsed)
+        if len(matched) != 1:
+            print(f"{name}: FAIL corner search for region id={region['id']} "
+                  f"matched {len(matched)} regions, expected 1")
+            ok = False
+            continue
+        if matched[0]['id'] != region['id'] or matched[0]['frame'] != region['frame']:
+            print(f"{name}: FAIL corner search for region id={region['id']} "
+                  f"resolved to a different region {matched[0]['id']!r}")
+            ok = False
+
+    # A coordinate list that matches no region must return no match.
+    bogus = [(1.0, 1.0), (2.0, 1.0), (2.0, 2.0), (1.0, 2.0)]
+    if RegionSearchManager.find_region_by_corners(analysis, bogus):
+        print(f"{name}: FAIL corner search matched a region for unrelated coordinates")
+        ok = False
+
     return ok
 
 
