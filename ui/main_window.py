@@ -410,22 +410,29 @@ class DXFViewerApp(QMainWindow):
             action.setFont(toolbar_font)
             toolbar.addAction(action)
 
-        toolbar.addSeparator()
+        # --- Second toolbar row: Search Handle / Search Boundary groups ---
+        # Kept on their own row so the combined width of all three search
+        # groups doesn't exceed the window width and trigger Qt's automatic
+        # (and visually confusing) toolbar line-wrapping.
+        self.addToolBarBreak()
+        toolbar_search2 = QToolBar()
+        toolbar_search2.setFont(toolbar_font)
+        self.addToolBar(toolbar_search2)
 
         # Search Handle group — reuse the menu actions (shared enabled state)
         for action in (self.search_handle_action, self.clear_handle_search_action,
                        self.find_next_handle_action, self.find_prev_handle_action):
             action.setFont(toolbar_font)
-            toolbar.addAction(action)
+            toolbar_search2.addAction(action)
 
-        toolbar.addSeparator()
+        toolbar_search2.addSeparator()
 
         # Search Boundary group — reuse the menu actions (shared enabled state)
         for action in (self.search_boundary_action, self.clear_boundary_highlight_action):
             action.setFont(toolbar_font)
-            toolbar.addAction(action)
+            toolbar_search2.addAction(action)
 
-        # --- Second toolbar row: Change Colors onward ---
+        # --- Third toolbar row: Change Colors onward ---
         self.addToolBarBreak()
         toolbar2 = QToolBar()
         toolbar2.setFont(toolbar_font)

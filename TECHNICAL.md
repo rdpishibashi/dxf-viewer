@@ -80,16 +80,27 @@ python dxf_viewer.py drawing1 drawing2.dxf
 
 ## 主要機能の実装
 
-### ツールバー（全機能のボタン化・2段）
+### ツールバー（全機能のボタン化・3段、2026-06-23 に2段→3段へ変更）
 
 **方針: すべての機能をツールバーのボタンから操作可能にする。** `create_toolbar()` は
-`addToolBarBreak()` で**2段**に分け、以下を配置する。
+`addToolBarBreak()` で**3段**に分け、以下を配置する。
 
-- **1段目**: Open / Info / Export / **[Search Text / Clear / Next / Previous]** /
-  **[Search Handle / Clear / Next / Prev]** / **[Search Boundary / Clear]**
-  （3つの検索系を区切り線でグループ化。各グループ内の Clear/Next/Prev はグループ名で
-  意味が一意に決まるため、ボタン上は短いラベルで揃える）
-- **2段目**: Change Colors / Restore Colors / Background Color / Consolidate Layers
+- **1段目**: Open / Info / Export / **[Search Text / Clear / Next / Previous]**
+- **2段目**: **[Search Handle / Clear / Next / Prev]** / **[Search Boundary / Clear]**
+- **3段目**: Change Colors / Restore Colors / Background Color / Consolidate Layers
+
+（3つの検索系を区切り線でグループ化。各グループ内の Clear/Next/Prev はグループ名で
+意味が一意に決まるため、ボタン上は短いラベルで揃える）
+
+**3段に分けている理由**: Search Handle 機能追加時、当初は1〜3番目の検索グループ全てを
+1段目に詰め込んだ（Open/Info/Export + 検索3グループ）ところ、`sizeHint` 幅が
+ウィンドウ幅（既定1200px）にほぼ達し（実測1112px）、実機の実フォントメトリクスでは
+ウィンドウ幅を超えて Qt の自動折り返しが発生、ボタンの表示順が視覚的に破綻した
+（"Consolidate Layers" の後ろに "Export"・"Info" が来るように見える、という形で
+ユーザーから報告）。`addToolBarBreak()` による明示的な行分割は Qt の自動折り返しに
+優先されるため、検索Handle・検索Boundaryの2グループを2段目に独立させて1段目の幅を
+約半分（553px）に抑えることで解消した。**各段の `sizeHint` 幅をウィンドウ幅より十分
+小さく保つこと**が、自動折り返しによる表示崩れを避ける鉄則。
 
 検索ナビ・境界検索・handle検索・レイヤー統合はメニュー用 `QAction` を**再利用**して
 ツールバーに追加しており（同一アクションを menu と toolbar の両方に add）、有効/無効
