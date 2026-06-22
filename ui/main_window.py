@@ -292,7 +292,7 @@ class DXFViewerApp(QMainWindow):
         # Find Previous
         self.find_prev_action = QAction('Find Previous', self)
         self.find_prev_action.setShortcut(QKeySequence.FindPrevious)
-        self.find_prev_action.setIconText('Previous')  # shorter label on the toolbar
+        self.find_prev_action.setIconText('Prev')  # shorter label on the toolbar
         self.find_prev_action.setFont(menu_font)
         self.find_prev_action.triggered.connect(self.find_previous)
         self.find_prev_action.setEnabled(False)
@@ -365,31 +365,15 @@ class DXFViewerApp(QMainWindow):
         toolbar.setFont(toolbar_font)
         
         self.addToolBar(toolbar)
-        
+
         # Open File
         open_action = QAction('Open', self)
         open_action.setFont(toolbar_font)  # ツールバーアイテムにもフォントを適用
         open_action.triggered.connect(self.open_file_dialog)
         toolbar.addAction(open_action)
-        
+
         toolbar.addSeparator()
-        
-        # File Info
-        self.toolbar_info_action = QAction('Info', self)
-        self.toolbar_info_action.setFont(toolbar_font)  # ツールバーアイテムにもフォントを適用
-        self.toolbar_info_action.triggered.connect(self.show_file_info)
-        self.toolbar_info_action.setEnabled(False)
-        toolbar.addAction(self.toolbar_info_action)
-        
-        # Export
-        self.toolbar_export_action = QAction('Export', self)
-        self.toolbar_export_action.setFont(toolbar_font)  # ツールバーアイテムにもフォントを適用
-        self.toolbar_export_action.triggered.connect(self.export_to_image)
-        self.toolbar_export_action.setEnabled(False)
-        toolbar.addAction(self.toolbar_export_action)
-        
-        toolbar.addSeparator()
-        
+
         # Search Text group
         self.toolbar_search_action = QAction('Search Text', self)
         self.toolbar_search_action.setFont(toolbar_font)
@@ -410,29 +394,22 @@ class DXFViewerApp(QMainWindow):
             action.setFont(toolbar_font)
             toolbar.addAction(action)
 
-        # --- Second toolbar row: Search Handle / Search Boundary groups ---
-        # Kept on their own row so the combined width of all three search
-        # groups doesn't exceed the window width and trigger Qt's automatic
-        # (and visually confusing) toolbar line-wrapping.
-        self.addToolBarBreak()
-        toolbar_search2 = QToolBar()
-        toolbar_search2.setFont(toolbar_font)
-        self.addToolBar(toolbar_search2)
+        toolbar.addSeparator()
 
         # Search Handle group — reuse the menu actions (shared enabled state)
         for action in (self.search_handle_action, self.clear_handle_search_action,
                        self.find_next_handle_action, self.find_prev_handle_action):
             action.setFont(toolbar_font)
-            toolbar_search2.addAction(action)
+            toolbar.addAction(action)
 
-        toolbar_search2.addSeparator()
+        toolbar.addSeparator()
 
         # Search Boundary group — reuse the menu actions (shared enabled state)
         for action in (self.search_boundary_action, self.clear_boundary_highlight_action):
             action.setFont(toolbar_font)
-            toolbar_search2.addAction(action)
+            toolbar.addAction(action)
 
-        # --- Third toolbar row: Change Colors onward ---
+        # --- Second toolbar row: Change Colors onward, then Export/Info ---
         self.addToolBarBreak()
         toolbar2 = QToolBar()
         toolbar2.setFont(toolbar_font)
@@ -444,7 +421,7 @@ class DXFViewerApp(QMainWindow):
         self.toolbar_change_colors_action.triggered.connect(self.change_all_colors)
         self.toolbar_change_colors_action.setEnabled(False)
         toolbar2.addAction(self.toolbar_change_colors_action)
-        
+
         # Restore Colors
         self.toolbar_restore_colors_action = QAction('Restore Colors', self)
         self.toolbar_restore_colors_action.setFont(toolbar_font)
@@ -463,9 +440,25 @@ class DXFViewerApp(QMainWindow):
 
         toolbar2.addSeparator()
 
-        # Consolidate Layers (last) — reuse the menu action (shared enabled state)
+        # Consolidate Layers — reuse the menu action (shared enabled state)
         self.consolidate_layers_action.setFont(toolbar_font)
         toolbar2.addAction(self.consolidate_layers_action)
+
+        toolbar2.addSeparator()
+
+        # Export
+        self.toolbar_export_action = QAction('Export', self)
+        self.toolbar_export_action.setFont(toolbar_font)
+        self.toolbar_export_action.triggered.connect(self.export_to_image)
+        self.toolbar_export_action.setEnabled(False)
+        toolbar2.addAction(self.toolbar_export_action)
+
+        # File Info
+        self.toolbar_info_action = QAction('Info', self)
+        self.toolbar_info_action.setFont(toolbar_font)
+        self.toolbar_info_action.triggered.connect(self.show_file_info)
+        self.toolbar_info_action.setEnabled(False)
+        toolbar2.addAction(self.toolbar_info_action)
     
     def create_status_bar(self):
         """ステータスバーを作成"""

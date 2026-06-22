@@ -80,27 +80,29 @@ python dxf_viewer.py drawing1 drawing2.dxf
 
 ## 主要機能の実装
 
-### ツールバー（全機能のボタン化・3段、2026-06-23 に2段→3段へ変更）
+### ツールバー（全機能のボタン化・2段、2026-06-23 構成変更）
 
 **方針: すべての機能をツールバーのボタンから操作可能にする。** `create_toolbar()` は
-`addToolBarBreak()` で**3段**に分け、以下を配置する。
+`addToolBarBreak()` で**2段**に分け、以下を配置する。
 
-- **1段目**: Open / Info / Export / **[Search Text / Clear / Next / Previous]**
-- **2段目**: **[Search Handle / Clear / Next / Prev]** / **[Search Boundary / Clear]**
-- **3段目**: Change Colors / Restore Colors / Background Color / Consolidate Layers
+- **1段目**: Open / **[Search Text / Clear / Next / Prev]** /
+  **[Search Handle / Clear / Next / Prev]** / **[Search Boundary / Clear]**
+- **2段目**: Change Colors / Restore Colors / Background Color / Consolidate Layers /
+  Export / Info
 
 （3つの検索系を区切り線でグループ化。各グループ内の Clear/Next/Prev はグループ名で
-意味が一意に決まるため、ボタン上は短いラベルで揃える）
+意味が一意に決まるため、ボタン上は短いラベルで揃える。Info/Export はユーザー希望で
+2段目の末尾に移動）
 
-**3段に分けている理由**: Search Handle 機能追加時、当初は1〜3番目の検索グループ全てを
-1段目に詰め込んだ（Open/Info/Export + 検索3グループ）ところ、`sizeHint` 幅が
-ウィンドウ幅（既定1200px）にほぼ達し（実測1112px）、実機の実フォントメトリクスでは
-ウィンドウ幅を超えて Qt の自動折り返しが発生、ボタンの表示順が視覚的に破綻した
-（"Consolidate Layers" の後ろに "Export"・"Info" が来るように見える、という形で
-ユーザーから報告）。`addToolBarBreak()` による明示的な行分割は Qt の自動折り返しに
-優先されるため、検索Handle・検索Boundaryの2グループを2段目に独立させて1段目の幅を
-約半分（553px）に抑えることで解消した。**各段の `sizeHint` 幅をウィンドウ幅より十分
-小さく保つこと**が、自動折り返しによる表示崩れを避ける鉄則。
+**自動折り返しに関する注意**: Search Handle 機能追加直後、Open/Info/Export + 検索3
+グループを全て1段目に詰め込んだところ、`sizeHint` 幅がウィンドウ幅（既定1200px）の
+1112pxに達し、実機の実フォントメトリクスではウィンドウ幅を超えて Qt の自動折り返しが
+発生、ボタンの表示順が視覚的に破綻した（"Consolidate Layers" の後ろに "Export"・
+"Info" が来るように見える、という形でユーザーから報告）。現在の1段目（Open + 検索3
+グループ、Info/Export を含まない）の `sizeHint` は945px（既定ウィンドウ幅1200pxの
+約79%）まで抑えられている。**各段の `sizeHint` 幅をウィンドウ幅より十分小さく保つこと**
+が、`addToolBarBreak()` による明示的な行分割を機能させ自動折り返しによる表示崩れを
+避ける鉄則（ウィンドウを大きく縮小する・ボタンがさらに増える場合は要再確認）。
 
 検索ナビ・境界検索・handle検索・レイヤー統合はメニュー用 `QAction` を**再利用**して
 ツールバーに追加しており（同一アクションを menu と toolbar の両方に add）、有効/無効
@@ -571,4 +573,4 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-06-23（DXF handle 直接指定によるエンティティ検索「Search Handle」を追加（テキスト検索・境界検索と並列の第3モード、複数handle対応、`QAction.setIconText()` でツールバー3グループのラベルを短縮表示）+ 矩形領域の辺ホバーハイライトを輪郭のみに限定 + Search Boundary に頂点座標リストでの検索を追加 + 閉領域検出で行き止まり枝を除去し頂点座標の重複アーティファクト・領域重複検出バグを解消 + 行き止まり枝を連結成分単位でグルーピング + 領域名候補の優先順位(Tier)制を導入 + 領域境界線の収集にPHANTOM等の線種除外を追加 + region_detector.py のモジュール性・可読性向けリファクタ + Search Boundary が最上位候補のみで照合するよう修正し領域名候補のTier1/2を領域内側のラベルに限定）*
+*最終更新: 2026-06-23（DXF handle 直接指定によるエンティティ検索「Search Handle」を追加（テキスト検索・境界検索と並列の第3モード、複数handle対応、`QAction.setIconText()` でツールバー3グループのラベルを短縮表示）+ ツールバーをユーザー希望の配置（1段目: Open+検索3グループ、2段目: 色変更系+Consolidate Layers+Export+Info）に再構成 + 矩形領域の辺ホバーハイライトを輪郭のみに限定 + Search Boundary に頂点座標リストでの検索を追加 + 閉領域検出で行き止まり枝を除去し頂点座標の重複アーティファクト・領域重複検出バグを解消 + 行き止まり枝を連結成分単位でグルーピング + 領域名候補の優先順位(Tier)制を導入 + 領域境界線の収集にPHANTOM等の線種除外を追加 + region_detector.py のモジュール性・可読性向けリファクタ + Search Boundary が最上位候補のみで照合するよう修正し領域名候補のTier1/2を領域内側のラベルに限定）*
