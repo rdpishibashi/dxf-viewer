@@ -52,6 +52,12 @@ class DXFTab:
         self.search_active = False  # Track if search is active
         self.search_dim_color = (251, 0xC0C0C0)  # Default dimmed color (index, RGB)
 
+        # Handle search attributes (find entities directly by DXF handle, e.g. "#212A")
+        self.handle_search_results = []
+        self.current_handle_search_index = -1
+        self.handle_search_active = False
+        self.handle_search_dim_color = (251, 0xC0C0C0)  # Default dimmed color (index, RGB)
+
         # Color change attributes
         self.color_change_active = False  # Track if colors have been changed
         self.color_change_backup = {}  # Store original colors for color change feature

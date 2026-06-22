@@ -23,7 +23,7 @@ from core.region_detector import extract_text_from_entity
 from core.layer_consolidator import consolidate_layers as consolidate_doc_layers
 from ui.dialogs import (
     BackgroundColorDialog, ColorChangeDialog, TextSearchDialog,
-    BoundarySearchDialog, FileInfoDialog, ExportImageDialog
+    HandleSearchDialog, BoundarySearchDialog, FileInfoDialog, ExportImageDialog
 )
 
 # ezdxf monkey patch for CADViewer compatibility
@@ -130,10 +130,18 @@ class DXFViewerApp(QMainWindow):
         if current_tab and hasattr(current_tab, 'tab_data'):
             tab_data = current_tab.tab_data
             has_results = len(tab_data.search_results) > 0 and tab_data.search_active
-            self.clear_search_action.setEnabled(has_results or tab_data.boundary_search_active)
-            self.toolbar_clear_search_action.setEnabled(has_results or tab_data.boundary_search_active)
+            has_handle_results = (
+                len(tab_data.handle_search_results) > 0 and tab_data.handle_search_active)
+            self.clear_search_action.setEnabled(
+                has_results or has_handle_results or tab_data.boundary_search_active)
+            self.toolbar_clear_search_action.setEnabled(
+                has_results or has_handle_results or tab_data.boundary_search_active)
             self.find_next_action.setEnabled(len(tab_data.search_results) > 1)
             self.find_prev_action.setEnabled(len(tab_data.search_results) > 1)
+
+            self.clear_handle_search_action.setEnabled(has_handle_results)
+            self.find_next_handle_action.setEnabled(len(tab_data.handle_search_results) > 1)
+            self.find_prev_handle_action.setEnabled(len(tab_data.handle_search_results) > 1)
 
             # Boundary highlight clear is available whenever overlays exist
             self.clear_boundary_highlight_action.setEnabled(
@@ -275,6 +283,7 @@ class DXFViewerApp(QMainWindow):
         # Find Next
         self.find_next_action = QAction('Find Next', self)
         self.find_next_action.setShortcut(QKeySequence.FindNext)
+        self.find_next_action.setIconText('Next')  # shorter label on the toolbar
         self.find_next_action.setFont(menu_font)
         self.find_next_action.triggered.connect(self.find_next)
         self.find_next_action.setEnabled(False)
@@ -283,6 +292,7 @@ class DXFViewerApp(QMainWindow):
         # Find Previous
         self.find_prev_action = QAction('Find Previous', self)
         self.find_prev_action.setShortcut(QKeySequence.FindPrevious)
+        self.find_prev_action.setIconText('Prev')  # shorter label on the toolbar
         self.find_prev_action.setFont(menu_font)
         self.find_prev_action.triggered.connect(self.find_previous)
         self.find_prev_action.setEnabled(False)
@@ -290,9 +300,45 @@ class DXFViewerApp(QMainWindow):
 
         search_menu.addSeparator()
 
+        # Search Handle (one or more entities found directly by DXF handle, e.g. "#212A")
+        self.search_handle_action = QAction('Search Handle...', self)
+        self.search_handle_action.setIconText('Search Handle')
+        self.search_handle_action.setFont(menu_font)
+        self.search_handle_action.setToolTip('Find entities by DXF handle, e.g. #212A')
+        self.search_handle_action.triggered.connect(self.search_handle)
+        self.search_handle_action.setEnabled(False)
+        search_menu.addAction(self.search_handle_action)
+
+        # Clear Search Handle
+        self.clear_handle_search_action = QAction('Clear Search Handle', self)
+        self.clear_handle_search_action.setIconText('Clear')  # shorter label on the toolbar
+        self.clear_handle_search_action.setFont(menu_font)
+        self.clear_handle_search_action.triggered.connect(self.clear_search)
+        self.clear_handle_search_action.setEnabled(False)
+        search_menu.addAction(self.clear_handle_search_action)
+
+        # Find Next Handle
+        self.find_next_handle_action = QAction('Find Next Handle', self)
+        self.find_next_handle_action.setIconText('Next')  # shorter label on the toolbar
+        self.find_next_handle_action.setFont(menu_font)
+        self.find_next_handle_action.triggered.connect(self.find_next_handle)
+        self.find_next_handle_action.setEnabled(False)
+        search_menu.addAction(self.find_next_handle_action)
+
+        # Find Previous Handle
+        self.find_prev_handle_action = QAction('Find Previous Handle', self)
+        self.find_prev_handle_action.setIconText('Prev')  # shorter label on the toolbar
+        self.find_prev_handle_action.setFont(menu_font)
+        self.find_prev_handle_action.triggered.connect(self.find_previous_handle)
+        self.find_prev_handle_action.setEnabled(False)
+        search_menu.addAction(self.find_prev_handle_action)
+
+        search_menu.addSeparator()
+
         # Search Boundary (rectangular region by name)
         self.search_boundary_action = QAction('Search Boundary...', self)
         self.search_boundary_action.setShortcut(QKeySequence('Ctrl+B'))
+        self.search_boundary_action.setIconText('Search Boundary')
         self.search_boundary_action.setFont(menu_font)
         self.search_boundary_action.setToolTip('Search rectangular regions by name (Ctrl+B)')
         self.search_boundary_action.triggered.connect(self.search_boundary)
@@ -301,6 +347,7 @@ class DXFViewerApp(QMainWindow):
 
         # Clear Boundary Highlight (removes persisted region overlays)
         self.clear_boundary_highlight_action = QAction('Clear Boundary Highlight', self)
+        self.clear_boundary_highlight_action.setIconText('Clear')  # shorter label on the toolbar
         self.clear_boundary_highlight_action.setFont(menu_font)
         self.clear_boundary_highlight_action.setToolTip('Remove persisted region boundary highlights')
         self.clear_boundary_highlight_action.triggered.connect(self.clear_boundary_highlight)
@@ -318,58 +365,51 @@ class DXFViewerApp(QMainWindow):
         toolbar.setFont(toolbar_font)
         
         self.addToolBar(toolbar)
-        
+
         # Open File
         open_action = QAction('Open', self)
         open_action.setFont(toolbar_font)  # ツールバーアイテムにもフォントを適用
         open_action.triggered.connect(self.open_file_dialog)
         toolbar.addAction(open_action)
-        
+
         toolbar.addSeparator()
-        
-        # File Info
-        self.toolbar_info_action = QAction('Info', self)
-        self.toolbar_info_action.setFont(toolbar_font)  # ツールバーアイテムにもフォントを適用
-        self.toolbar_info_action.triggered.connect(self.show_file_info)
-        self.toolbar_info_action.setEnabled(False)
-        toolbar.addAction(self.toolbar_info_action)
-        
-        # Export
-        self.toolbar_export_action = QAction('Export', self)
-        self.toolbar_export_action.setFont(toolbar_font)  # ツールバーアイテムにもフォントを適用
-        self.toolbar_export_action.triggered.connect(self.export_to_image)
-        self.toolbar_export_action.setEnabled(False)
-        toolbar.addAction(self.toolbar_export_action)
-        
-        toolbar.addSeparator()
-        
-        # Search
-        self.toolbar_search_action = QAction('Search', self)
+
+        # Search Text group
+        self.toolbar_search_action = QAction('Search Text', self)
         self.toolbar_search_action.setFont(toolbar_font)
         self.toolbar_search_action.triggered.connect(self.search_text)
         self.toolbar_search_action.setEnabled(False)
         toolbar.addAction(self.toolbar_search_action)
-        
+
         # Clear Search
-        self.toolbar_clear_search_action = QAction('Clear Search', self)
+        self.toolbar_clear_search_action = QAction('Clear', self)
         self.toolbar_clear_search_action.setFont(toolbar_font)
         self.toolbar_clear_search_action.triggered.connect(self.clear_search)
         self.toolbar_clear_search_action.setEnabled(False)
         toolbar.addAction(self.toolbar_clear_search_action)
 
-        # Search navigation — reuse the menu actions (shared enabled state)
+        # Search navigation — reuse the menu actions (shared enabled state,
+        # iconText shortens the label shown on the toolbar button)
         for action in (self.find_next_action, self.find_prev_action):
             action.setFont(toolbar_font)
             toolbar.addAction(action)
 
         toolbar.addSeparator()
 
-        # Boundary search — reuse the menu actions (shared enabled state)
+        # Search Handle group — reuse the menu actions (shared enabled state)
+        for action in (self.search_handle_action, self.clear_handle_search_action,
+                       self.find_next_handle_action, self.find_prev_handle_action):
+            action.setFont(toolbar_font)
+            toolbar.addAction(action)
+
+        toolbar.addSeparator()
+
+        # Search Boundary group — reuse the menu actions (shared enabled state)
         for action in (self.search_boundary_action, self.clear_boundary_highlight_action):
             action.setFont(toolbar_font)
             toolbar.addAction(action)
 
-        # --- Second toolbar row: Change Colors onward ---
+        # --- Second toolbar row: Change Colors onward, then Export/Info ---
         self.addToolBarBreak()
         toolbar2 = QToolBar()
         toolbar2.setFont(toolbar_font)
@@ -381,7 +421,7 @@ class DXFViewerApp(QMainWindow):
         self.toolbar_change_colors_action.triggered.connect(self.change_all_colors)
         self.toolbar_change_colors_action.setEnabled(False)
         toolbar2.addAction(self.toolbar_change_colors_action)
-        
+
         # Restore Colors
         self.toolbar_restore_colors_action = QAction('Restore Colors', self)
         self.toolbar_restore_colors_action.setFont(toolbar_font)
@@ -400,9 +440,25 @@ class DXFViewerApp(QMainWindow):
 
         toolbar2.addSeparator()
 
-        # Consolidate Layers (last) — reuse the menu action (shared enabled state)
+        # Consolidate Layers — reuse the menu action (shared enabled state)
         self.consolidate_layers_action.setFont(toolbar_font)
         toolbar2.addAction(self.consolidate_layers_action)
+
+        toolbar2.addSeparator()
+
+        # Export
+        self.toolbar_export_action = QAction('Export', self)
+        self.toolbar_export_action.setFont(toolbar_font)
+        self.toolbar_export_action.triggered.connect(self.export_to_image)
+        self.toolbar_export_action.setEnabled(False)
+        toolbar2.addAction(self.toolbar_export_action)
+
+        # File Info
+        self.toolbar_info_action = QAction('Info', self)
+        self.toolbar_info_action.setFont(toolbar_font)
+        self.toolbar_info_action.triggered.connect(self.show_file_info)
+        self.toolbar_info_action.setEnabled(False)
+        toolbar2.addAction(self.toolbar_info_action)
     
     def create_status_bar(self):
         """ステータスバーを作成"""
@@ -537,6 +593,7 @@ class DXFViewerApp(QMainWindow):
         self.toolbar_info_action.setEnabled(file_loaded)
         self.search_action.setEnabled(file_loaded)
         self.toolbar_search_action.setEnabled(file_loaded)
+        self.search_handle_action.setEnabled(file_loaded)
         self.search_boundary_action.setEnabled(file_loaded)
         self.consolidate_layers_action.setEnabled(file_loaded)
         self.change_colors_action.setEnabled(file_loaded)
@@ -694,7 +751,7 @@ class DXFViewerApp(QMainWindow):
                 
                 # Navigate to first result
                 tab_data.current_search_index = 0
-                self.navigate_to_result(tab_data, 0)
+                self.navigate_to_result(tab_data, tab_data.search_results, 0)
                 
                 # Update status bar
                 self.status_bar.showMessage(
@@ -709,29 +766,41 @@ class DXFViewerApp(QMainWindow):
                 self.status_bar.showMessage("No matches found")
     
     def clear_search(self):
-        """Clear all search highlights and restore original colors"""
+        """Clear all search highlights and restore original colors.
+
+        Clears whichever of text search, handle search, and boundary search
+        are currently active — the three modes are mutually exclusive in
+        practice (each clears the others before starting), but this handles
+        all of them so every "Clear" button/shortcut acts as a global clear.
+        """
         current_tab = self.get_current_tab()
         if current_tab and hasattr(current_tab, 'tab_data'):
             tab_data = current_tab.tab_data
 
             cleared = False
 
-            if tab_data.search_active:
-                # Restore original colors
+            if tab_data.search_active or tab_data.handle_search_active:
+                # Restore original colors (shared backup for both modes)
                 SearchManager.restore_original_colors(tab_data)
 
-                # Clear search results
-                tab_data.search_results.clear()
-                tab_data.current_search_index = -1
-                tab_data.search_active = False
+                if tab_data.search_active:
+                    tab_data.search_results.clear()
+                    tab_data.current_search_index = -1
+                    tab_data.search_active = False
+                    self.find_next_action.setEnabled(False)
+                    self.find_prev_action.setEnabled(False)
+                    cleared = True
+
+                if tab_data.handle_search_active:
+                    tab_data.handle_search_results.clear()
+                    tab_data.current_handle_search_index = -1
+                    tab_data.handle_search_active = False
+                    self.find_next_handle_action.setEnabled(False)
+                    self.find_prev_handle_action.setEnabled(False)
+                    cleared = True
 
                 # Refresh the viewer
                 self.refresh_viewer(tab_data)
-
-                # Disable navigation actions
-                self.find_next_action.setEnabled(False)
-                self.find_prev_action.setEnabled(False)
-                cleared = True
 
             if tab_data.boundary_search_active:
                 self._clear_boundary_search(tab_data)
@@ -740,29 +809,114 @@ class DXFViewerApp(QMainWindow):
             if cleared:
                 self.clear_search_action.setEnabled(False)
                 self.toolbar_clear_search_action.setEnabled(False)
+                self.clear_handle_search_action.setEnabled(False)
                 self.status_bar.showMessage("Search cleared")
-    
+
     def find_next(self):
         """Navigate to next search result"""
         current_tab = self.get_current_tab()
         if not current_tab or not hasattr(current_tab, 'tab_data'):
             return
-        
+
         tab_data = current_tab.tab_data
         if tab_data.search_results:
             tab_data.current_search_index = (tab_data.current_search_index + 1) % len(tab_data.search_results)
-            self.navigate_to_result(tab_data, tab_data.current_search_index)
-    
+            self.navigate_to_result(tab_data, tab_data.search_results, tab_data.current_search_index)
+
     def find_previous(self):
         """Navigate to previous search result"""
         current_tab = self.get_current_tab()
         if not current_tab or not hasattr(current_tab, 'tab_data'):
             return
-        
+
         tab_data = current_tab.tab_data
         if tab_data.search_results:
             tab_data.current_search_index = (tab_data.current_search_index - 1) % len(tab_data.search_results)
-            self.navigate_to_result(tab_data, tab_data.current_search_index)
+            self.navigate_to_result(tab_data, tab_data.search_results, tab_data.current_search_index)
+
+    # ------------------------------------------------------------------
+    # Handle search (find one or more entities directly by DXF handle)
+    # ------------------------------------------------------------------
+    def search_handle(self):
+        """Open the handle search dialog and highlight the resolved entities."""
+        current_tab = self.get_current_tab()
+        if not current_tab or not hasattr(current_tab, 'tab_data'):
+            return
+
+        tab_data = current_tab.tab_data
+        if not tab_data.dxf_doc:
+            QMessageBox.warning(self, "No File", "No DXF file is currently loaded.")
+            return
+
+        dialog = HandleSearchDialog(self)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+
+        params = dialog.get_search_params()
+        handles_text = params['handles'].strip()
+        if not handles_text:
+            return
+
+        results, not_found = SearchManager.find_entities_by_handles(tab_data.dxf_doc, handles_text)
+
+        if not results:
+            QMessageBox.information(
+                self, "Search Handle",
+                f"No entity found for handle(s): {', '.join(not_found)}")
+            self.status_bar.showMessage("No matching entity found")
+            return
+
+        # Mutually exclusive with the other search modes.
+        self.clear_search()
+        self.clear_boundary_highlight()
+
+        SearchManager.store_all_entity_colors(tab_data)
+        tab_data.handle_search_dim_color = params['dim_color']
+        tab_data.handle_search_results = results
+
+        SearchManager.apply_highlighting(tab_data, results, params['dim_color'])
+        self.refresh_viewer(tab_data)
+
+        tab_data.handle_search_active = True
+        self.clear_search_action.setEnabled(True)
+        self.toolbar_clear_search_action.setEnabled(True)
+        self.clear_handle_search_action.setEnabled(True)
+        self.find_next_handle_action.setEnabled(len(results) > 1)
+        self.find_prev_handle_action.setEnabled(len(results) > 1)
+
+        tab_data.current_handle_search_index = 0
+        self.navigate_to_result(tab_data, tab_data.handle_search_results, 0)
+
+        summary = f"Found {len(results)} entity(ies) by handle"
+        if not_found:
+            summary += f"; not found: {', '.join(not_found)}"
+        self.status_bar.showMessage(summary)
+
+    def find_next_handle(self):
+        """Navigate to next handle-search result"""
+        current_tab = self.get_current_tab()
+        if not current_tab or not hasattr(current_tab, 'tab_data'):
+            return
+
+        tab_data = current_tab.tab_data
+        if tab_data.handle_search_results:
+            tab_data.current_handle_search_index = (
+                tab_data.current_handle_search_index + 1) % len(tab_data.handle_search_results)
+            self.navigate_to_result(
+                tab_data, tab_data.handle_search_results, tab_data.current_handle_search_index)
+
+    def find_previous_handle(self):
+        """Navigate to previous handle-search result"""
+        current_tab = self.get_current_tab()
+        if not current_tab or not hasattr(current_tab, 'tab_data'):
+            return
+
+        tab_data = current_tab.tab_data
+        if tab_data.handle_search_results:
+            tab_data.current_handle_search_index = (
+                tab_data.current_handle_search_index - 1) % len(tab_data.handle_search_results)
+            self.navigate_to_result(
+                tab_data, tab_data.handle_search_results, tab_data.current_handle_search_index)
 
     # ------------------------------------------------------------------
     # Boundary (rectangular region) search
@@ -1335,31 +1489,36 @@ class DXFViewerApp(QMainWindow):
             except Exception as e:
                 print(f"Error refreshing viewer: {e}")
     
-    def navigate_to_result(self, tab_data, index):
-        """Center view on a specific search result"""
-        if not tab_data.search_results or index < 0 or index >= len(tab_data.search_results):
+    def navigate_to_result(self, tab_data, results, index):
+        """Center view on a specific result from the given results list.
+
+        ``results`` is passed explicitly (rather than reading
+        ``tab_data.search_results``) so this is shared between text search
+        and handle search, which keep independent result lists.
+        """
+        if not results or index < 0 or index >= len(results):
             return
-        
-        result = tab_data.search_results[index]
+
+        result = results[index]
         graphics_view = tab_data.cad_viewer.graphics_view
-        
+
         if graphics_view and result.position:
             # Center the view on the result
             x = float(result.position[0])
             y = float(result.position[1])
-            
+
             # Entities sit in the scene at their true DXF coordinates
             # (the view applies the vertical flip), so center on (x, y).
             scene_point = QPointF(x, y)
 
             # Center the view on this point
             graphics_view.centerOn(scene_point)
-            
+
             # Update status bar
             self.status_bar.showMessage(
-                f"Result {index + 1} of {len(tab_data.search_results)}: '{result.text[:50]}...'"
+                f"Result {index + 1} of {len(results)}: '{result.text[:50]}...'"
                 if len(result.text) > 50 else
-                f"Result {index + 1} of {len(tab_data.search_results)}: '{result.text}'"
+                f"Result {index + 1} of {len(results)}: '{result.text}'"
             )
 
     def load_dxf(self, file_path):

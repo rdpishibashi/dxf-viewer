@@ -80,19 +80,42 @@ python dxf_viewer.py drawing1 drawing2.dxf
 
 ## 主要機能の実装
 
-### ツールバー（全機能のボタン化・2段）
+### ツールバー（全機能のボタン化・2段、2026-06-23 構成変更）
 
 **方針: すべての機能をツールバーのボタンから操作可能にする。** `create_toolbar()` は
 `addToolBarBreak()` で**2段**に分け、以下を配置する。
 
-- **1段目**: Open / Info / Export / Search / Clear Search / Find Next / Find Previous /
-  Search Boundary / Clear Boundary Highlight
-- **2段目**: Change Colors / Restore Colors / Background Color / Consolidate Layers
+- **1段目**: Open / **[Search Text / Clear / Next / Prev]** /
+  **[Search Handle / Clear / Next / Prev]** / **[Search Boundary / Clear]**
+- **2段目**: Change Colors / Restore Colors / Background Color / Consolidate Layers /
+  Export / Info
 
-検索ナビ・境界検索・レイヤー統合はメニュー用 `QAction` を**再利用**してツールバーに
-追加しており（同一アクションを menu と toolbar の両方に add）、有効/無効状態は自動で
-連動する（重複した状態管理コードは持たない）。メニューバーは併存（キーボード
-ショートカットと項目の探索性のため）。
+（3つの検索系を区切り線でグループ化。各グループ内の Clear/Next/Prev はグループ名で
+意味が一意に決まるため、ボタン上は短いラベルで揃える。Info/Export はユーザー希望で
+2段目の末尾に移動）
+
+**自動折り返しに関する注意**: Search Handle 機能追加直後、Open/Info/Export + 検索3
+グループを全て1段目に詰め込んだところ、`sizeHint` 幅がウィンドウ幅（既定1200px）の
+1112pxに達し、実機の実フォントメトリクスではウィンドウ幅を超えて Qt の自動折り返しが
+発生、ボタンの表示順が視覚的に破綻した（"Consolidate Layers" の後ろに "Export"・
+"Info" が来るように見える、という形でユーザーから報告）。現在の1段目（Open + 検索3
+グループ、Info/Export を含まない）の `sizeHint` は945px（既定ウィンドウ幅1200pxの
+約79%）まで抑えられている。**各段の `sizeHint` 幅をウィンドウ幅より十分小さく保つこと**
+が、`addToolBarBreak()` による明示的な行分割を機能させ自動折り返しによる表示崩れを
+避ける鉄則（ウィンドウを大きく縮小する・ボタンがさらに増える場合は要再確認）。
+
+検索ナビ・境界検索・handle検索・レイヤー統合はメニュー用 `QAction` を**再利用**して
+ツールバーに追加しており（同一アクションを menu と toolbar の両方に add）、有効/無効
+状態は自動で連動する（重複した状態管理コードは持たない）。メニューバーは併存
+（キーボードショートカットと項目の探索性のため）。
+
+**ツールバーとメニューでラベルを分ける（`QAction.setIconText()`、2026-06-23 追加）**:
+上記のように menu と toolbar で同一 `QAction` を共有しつつ、表示テキストだけ変えたい
+場合（menu は探索性重視で `'Find Next'`、toolbar はスペース節約で `'Next'` 等）は、
+`action.setText(...)` の他に `action.setIconText(...)` を呼ぶ。`text()` は menu 表示に、
+`iconText()`（未設定なら `text()` から自動生成）は アイコン無しの `QToolButton` 表示に
+使われる、という Qt の役割分担をそのまま利用しており、有効/無効状態の自動連動を保った
+まま表示だけを分離できる（新しい状態管理は不要）。
 
 ### LWPOLYLINE 内側エンティティのホバー検出（`ui/viewer_widget.py`）
 
@@ -166,6 +189,44 @@ DXF-viewer 独自のツールバー／メニューで代替できる。
     検索ヒットしなかった。`plain_mtext` 化でこれを解消（EE6868/EE6888 計 12,159 件で書式コード漏れゼロ・退行なしを確認）。
   - 副次効果: 前後空白・全角空白・`\P` 段落跨ぎの正規化。`%%c`/`%%d`/`%%p` は Ø/°/± へ変換。
   - 回帰テスト: `tests/regression/test_mtext_clean_search.py`
+
+### Handle 検索 / Search Handle（`core/search_manager.py`、2026-06-23 追加）
+
+DXF の handle（例 `212A`）を直接指定して、その1エンティティ（複数指定も可）を
+ハイライトする。テキスト検索・境界検索と並列の第3の検索モード。
+
+- **解決**: `SearchManager.find_entities_by_handles(doc, handles_text)`。
+  `doc.entitydb.get(handle)` で直接引く（modelspace・paperspace・block 定義のどこに
+  あっても1回の lookup で取得できる。スキャン不要）。入力はスペース／カンマ区切りで
+  複数指定可能、各トークンは先頭の `#` を除去・大文字化してから lookup する（`doc.entitydb`
+  は大文字小文字を区別する厳密一致のため）。重複は除去、見つからなかった handle は
+  `not_found` リストで返す。
+  - **位置の決定**: `ezdxf.bbox.extents([entity], fast=True)` の中心点を使う。bbox が
+    計算できないエンティティ（例: 可視テキストが空白のみの MTEXT）は `entity.dxf.insert`
+    （アンカー点）にフォールバックする。
+- **ハイライト**: `SearchManager.apply_highlighting(tab_data, results, dim_color)` という
+  汎用版を新設し、既存の `apply_search_highlighting(tab_data)`（テキスト検索用）はこれに
+  委譲するよう変更（dim/highlight のロジック自体は変更なし、結果セットと dim color を
+  外から渡せるようにしただけ）。`restore_original_colors()` は元々どの検索モードにも
+  依存しない実装だったため変更不要、そのまま共用。
+- **状態（`DXFTab`）**: `handle_search_results`・`current_handle_search_index`・
+  `handle_search_active`・`handle_search_dim_color`。テキスト検索の `search_results` 系とは
+  独立（ナビゲーション（Next/Prev）の対象が異なるため）。
+- **ナビゲーション**: `navigate_to_result(tab_data, results, index)` は対象の `results`
+  リストを明示的に受け取るよう汎用化（旧実装は `tab_data.search_results` を直接参照して
+  いた）。テキスト検索・handle検索の両方の Find Next/Previous がこの1つの実装を共有する。
+- **排他制御**: テキスト検索・境界検索・handle検索は同時に1つだけアクティブになる
+  （各検索の開始時に他の2つを `clear_search()` / `clear_boundary_highlight()` で解除）。
+  `clear_search()` 自体もテキスト検索とhandle検索の両方の状態をまとめて解除するよう拡張
+  した（元々テキスト検索＋境界検索の両方を解除していた箇所に handle検索を追加）。
+- **UI**: メニュー「Search Handle...」「Clear Search Handle」「Find Next Handle」
+  「Find Previous Handle」。ツールバーは同じ `QAction` を再利用し `setIconText()` で
+  短縮表示（前述）。キーボードショートカットは割り当てていない（`Ctrl+H` は macOS の
+  「アプリを隠す」とシステムレベルで衝突するため意図的に避けた）。
+- 回帰テスト: `tests/regression/test_handle_search.py`（`#` 付き／小文字／カンマ区切り・
+  重複・未解決 handle の解決ロジックに加え、`DXFViewerApp.search_handle()`/`clear_search()`
+  を headless（`QT_QPA_PLATFORM=offscreen`）で実行し、ダイムハイライト・色復元・UI状態の
+  有効/無効までを検証）。
 
 ### 領域検索 / Boundary Search（`core/region_detector.py` + `core/region_search_manager.py`）
 
@@ -512,4 +573,4 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-06-21（矩形領域の辺ホバーハイライトを輪郭のみに限定 + Search Boundary に頂点座標リストでの検索を追加 + 閉領域検出で行き止まり枝を除去し頂点座標の重複アーティファクト・領域重複検出バグを解消 + 行き止まり枝を連結成分単位でグルーピング + 領域名候補の優先順位(Tier)制を導入 + 領域境界線の収集にPHANTOM等の線種除外を追加 + region_detector.py のモジュール性・可読性向けリファクタ + Search Boundary が最上位候補のみで照合するよう修正し領域名候補のTier1/2を領域内側のラベルに限定）*
+*最終更新: 2026-06-23（DXF handle 直接指定によるエンティティ検索「Search Handle」を追加（テキスト検索・境界検索と並列の第3モード、複数handle対応、`QAction.setIconText()` でツールバー3グループのラベルを短縮表示）+ ツールバーをユーザー希望の配置（1段目: Open+検索3グループ、2段目: 色変更系+Consolidate Layers+Export+Info）に再構成 + 矩形領域の辺ホバーハイライトを輪郭のみに限定 + Search Boundary に頂点座標リストでの検索を追加 + 閉領域検出で行き止まり枝を除去し頂点座標の重複アーティファクト・領域重複検出バグを解消 + 行き止まり枝を連結成分単位でグルーピング + 領域名候補の優先順位(Tier)制を導入 + 領域境界線の収集にPHANTOM等の線種除外を追加 + region_detector.py のモジュール性・可読性向けリファクタ + Search Boundary が最上位候補のみで照合するよう修正し領域名候補のTier1/2を領域内側のラベルに限定）*
