@@ -123,6 +123,56 @@ Potential improvements for future versions:
 
 ---
 
+# A2. Handle Search Feature
+
+## Overview
+Find one or more entities directly by their DXF handle (the hex ID shown,
+for example, next to a vertex coordinate in the region popover, or in File
+Information) and highlight them — without needing to know any visible text.
+
+## Features
+
+### 1. Search Dialog
+- **Access**: Menu → Search → Search Handle... (toolbar button "Search Handle")
+- **Input**: one or more handles, e.g. `#212A` or `212A, 2ADC`. Separate
+  multiple handles with a space or comma. The leading `#` and letter case are
+  both optional.
+- **Color for non-matching entities**: same dim-color option as text search.
+
+### 2. Visual Highlighting
+- Matching entities are recolored red; everything else is dimmed, the same
+  scheme as plain text search.
+- The view centers on the first match. If a handle has no computable position
+  (e.g. an MTEXT whose visible text is empty), it is still found and
+  highlighted, just not auto-centered on.
+
+### 3. Navigation
+- **Find Next Handle** / **Find Previous Handle** (toolbar: "Next" / "Prev" in
+  the Search Handle group) step between multiple matched handles, the same way
+  Find Next/Previous does for text search.
+
+### 4. Clearing
+- **Clear Search Handle** (toolbar: "Clear" in the Search Handle group), or
+  the general **Clear Search** (Ctrl+Shift+F), restores original colors.
+
+## How It Works
+- Handles are resolved via `doc.entitydb`, which indexes every entity in the
+  file regardless of whether it lives in modelspace, a paperspace layout, or a
+  block definition — so a handle copied from anywhere in the file resolves
+  directly with no scanning.
+- Text search, Boundary search, and Handle search are mutually exclusive: each
+  one clears any other active search before starting.
+
+## Known Limitations
+1. A handle belonging to a block definition is shared by every INSERT of that
+   block (same constraint as text search recoloring block-sourced matches):
+   recoloring it affects all instances of that block, not just one.
+2. Some entities have no computable position to auto-center on (very rare —
+   e.g. an MTEXT with whitespace-only visible text); they are still found and
+   highlighted.
+
+---
+
 # C. Boundary (Region) Search Feature
 
 ## Overview
@@ -344,3 +394,8 @@ Tools → Change All Entity Colors... → Select "Gray"
   `ColorManager` now backs up and restores `true_color` as well as the ACI color
   (true_color takes precedence when rendering, so leaving it set kept the
   changed color).
+- 2026-06-23: Added Handle Search — find and highlight one or more entities
+  directly by DXF handle (e.g. `#212A`), resolved via `doc.entitydb` so it
+  works regardless of where the entity lives (modelspace, paperspace, or a
+  block definition). Mutually exclusive with Text Search and Boundary Search.
+  Regression test at `tests/regression/test_handle_search.py`.

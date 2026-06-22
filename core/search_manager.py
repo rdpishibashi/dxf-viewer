@@ -1,6 +1,7 @@
 """Search functionality for DXF text entities."""
 
 import re
+from ezdxf import bbox as ezdxf_bbox
 from .tab_manager import SearchResult
 from utils.text_utils import clean_mtext_format_codes
 
@@ -122,6 +123,65 @@ class SearchManager:
         return results
 
     @staticmethod
+    def find_entities_by_handles(doc, handles_text):
+        """Resolve a free-form, space/comma-separated list of DXF handles.
+
+        Looks up ``doc.entitydb`` directly rather than scanning entities, so a
+        handle resolves wherever it lives (modelspace, paperspace, or inside a
+        block definition) in one step. Handles are matched as exact-case hex
+        strings internally, so each input token is normalized (leading '#'
+        stripped, upper-cased) before lookup, since a handle copied from
+        elsewhere in the UI may include a '#' or differ in case.
+
+        Args:
+            doc: DXF document to search
+            handles_text: handles separated by whitespace and/or commas,
+                e.g. "#212A, 2adc"
+
+        Returns:
+            (results, not_found) — results is a list of SearchResult (one per
+            resolved handle, in input order, duplicates collapsed); not_found
+            is the list of normalized handle strings that did not resolve.
+        """
+        results = []
+        not_found = []
+        seen = set()
+
+        for raw in re.split(r'[\s,]+', handles_text.strip()):
+            handle = raw.strip().lstrip('#').upper()
+            if not handle or handle in seen:
+                continue
+            seen.add(handle)
+
+            entity = doc.entitydb.get(handle)
+            if entity is None:
+                not_found.append(handle)
+                continue
+
+            position = None
+            try:
+                extents = ezdxf_bbox.extents([entity], fast=True)
+                if extents.has_data:
+                    position = extents.center
+            except Exception:
+                pass
+            if position is None:
+                # bbox calculation has no data for some entities with no
+                # visible geometry (e.g. an MTEXT whose visible text is
+                # empty/whitespace-only) — fall back to the anchor point so
+                # navigation still has somewhere to center on.
+                position = getattr(entity.dxf, 'insert', None)
+
+            results.append(SearchResult(
+                entity=entity,
+                text=f"#{handle} ({entity.dxftype()})",
+                position=position,
+                original_color=getattr(entity.dxf, 'color', 256)
+            ))
+
+        return results, not_found
+
+    @staticmethod
     def store_all_entity_colors(tab_data):
         """Store original colors for all entities in the document.
 
@@ -153,54 +213,66 @@ class SearchManager:
                     tab_data.original_entity_colors[handle] = (color, true_color)
 
     @staticmethod
+    def apply_highlighting(tab_data, results, dim_color):
+        """Dim every entity except the given results, which are highlighted red.
+
+        Generalized version of ``apply_search_highlighting`` that takes the
+        results list and dim color explicitly, so other search modes (e.g.
+        handle search) can reuse the same dim/highlight pass without
+        duplicating it.
+
+        Args:
+            tab_data: DXFTab instance
+            results: list of SearchResult to highlight in red
+            dim_color: (color_index, rgb) tuple applied to everything else
+        """
+        if not tab_data.dxf_doc or not results:
+            return
+
+        dimmed_color_index, dimmed_rgb = dim_color
+        RED_COLOR_INDEX = 1
+        RED_RGB = 0xFF0000
+        result_handles = {
+            r.entity.dxf.handle for r in results if hasattr(r.entity.dxf, 'handle')
+        }
+
+        def dim_if_not_result(entity):
+            if hasattr(entity.dxf, 'color'):
+                handle = getattr(entity.dxf, 'handle', None)
+                if handle not in result_handles:
+                    try:
+                        entity.dxf.color = dimmed_color_index
+                        entity.dxf.true_color = dimmed_rgb
+                    except Exception:
+                        pass
+
+        # Dim all entities first
+        for entity in tab_data.dxf_doc.modelspace():
+            dim_if_not_result(entity)
+
+        # Also dim entities in blocks
+        for block in tab_data.dxf_doc.blocks:
+            if not block.name.startswith('*'):  # Skip system blocks
+                for entity in block:
+                    dim_if_not_result(entity)
+
+        # Highlight results in red
+        for result in results:
+            if hasattr(result.entity.dxf, 'color'):
+                try:
+                    result.entity.dxf.color = RED_COLOR_INDEX
+                    result.entity.dxf.true_color = RED_RGB
+                except Exception:
+                    pass
+
+    @staticmethod
     def apply_search_highlighting(tab_data):
         """Apply color changes to highlight search results.
 
         Args:
             tab_data: DXFTab instance with search results
         """
-        if not tab_data.dxf_doc or not tab_data.search_results:
-            return
-
-        # Use the user-selected dimmed color (tuple of index and RGB)
-        dimmed_color_index, dimmed_rgb = tab_data.search_dim_color
-        RED_COLOR_INDEX = 1
-        RED_RGB = 0xFF0000
-
-        # Dim all entities first
-        msp = tab_data.dxf_doc.modelspace()
-        for entity in msp:
-            if hasattr(entity.dxf, 'color'):
-                # Check if this entity is in search results
-                is_result = any(r.entity.dxf.handle == entity.dxf.handle for r in tab_data.search_results)
-                if not is_result:
-                    try:
-                        entity.dxf.color = dimmed_color_index
-                        entity.dxf.true_color = dimmed_rgb
-                    except:
-                        pass
-
-        # Also dim entities in blocks
-        for block in tab_data.dxf_doc.blocks:
-            if not block.name.startswith('*'):  # Skip system blocks
-                for entity in block:
-                    if hasattr(entity.dxf, 'color'):
-                        is_result = any(r.entity.dxf.handle == entity.dxf.handle for r in tab_data.search_results)
-                        if not is_result:
-                            try:
-                                entity.dxf.color = dimmed_color_index
-                                entity.dxf.true_color = dimmed_rgb
-                            except:
-                                pass
-
-        # Highlight search results in red
-        for result in tab_data.search_results:
-            if hasattr(result.entity.dxf, 'color'):
-                try:
-                    result.entity.dxf.color = RED_COLOR_INDEX
-                    result.entity.dxf.true_color = RED_RGB
-                except:
-                    pass
+        SearchManager.apply_highlighting(tab_data, tab_data.search_results, tab_data.search_dim_color)
 
     @staticmethod
     def restore_original_colors(tab_data):

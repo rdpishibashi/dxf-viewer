@@ -247,6 +247,94 @@ class TextSearchDialog(QDialog):
         return color_map.get(color_name, (251, 0xC0C0C0))
 
 
+class HandleSearchDialog(QDialog):
+    """Search dialog for finding one or more entities by DXF handle."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Search Handle in DXF")
+        self.setModal(True)
+        self.resize(420, 260)
+
+        layout = QVBoxLayout(self)
+
+        # Handle input
+        search_group = QGroupBox("DXF Handle(s)")
+        search_layout = QVBoxLayout()
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText(
+            "Enter one or more handles, e.g. #212A or 212A, 2ADC ...")
+        self.search_input.returnPressed.connect(self.accept)
+        search_layout.addWidget(self.search_input)
+        search_layout.addWidget(QLabel(
+            "Separate multiple handles with a space or comma.\n"
+            "The leading '#' and letter case are optional."))
+
+        search_group.setLayout(search_layout)
+        layout.addWidget(search_group)
+
+        # Non-matching entity color selection
+        color_group = QGroupBox("Non-matching Entity Color")
+        color_layout = QVBoxLayout()
+
+        self.color_combo = QComboBox()
+        self.color_combo.addItems([
+            "Light Gray",
+            "Gray",
+            "White",
+            "Black",
+            "Red",
+            "Yellow",
+            "Green",
+            "Cyan",
+            "Blue",
+            "Magenta"
+        ])
+        self.color_combo.setCurrentText("Light Gray")
+
+        color_layout.addWidget(QLabel("Color for non-matching entities:"))
+        color_layout.addWidget(self.color_combo)
+
+        color_group.setLayout(color_layout)
+        layout.addWidget(color_group)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        self.search_button = QPushButton("Search")
+        self.search_button.clicked.connect(self.accept)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(self.search_button)
+        button_layout.addWidget(self.cancel_button)
+        layout.addLayout(button_layout)
+
+        self.search_input.setFocus()
+
+    def get_search_params(self):
+        """Get handle search parameters."""
+        return {
+            'handles': self.search_input.text(),
+            'dim_color': self.get_selected_dim_color()
+        }
+
+    def get_selected_dim_color(self):
+        """Get the selected DXF color index and RGB value for dimmed entities."""
+        color_map = {
+            "Light Gray": (251, 0xC0C0C0),
+            "Gray": (8, 0x808080),
+            "White": (7, 0xFFFFFF),
+            "Black": (250, 0x000000),
+            "Red": (1, 0xFF0000),
+            "Yellow": (2, 0xFFFF00),
+            "Green": (3, 0x00FF00),
+            "Cyan": (4, 0x00FFFF),
+            "Blue": (5, 0x0000FF),
+            "Magenta": (6, 0xFF00FF)
+        }
+        return color_map.get(self.color_combo.currentText(), (251, 0xC0C0C0))
+
+
 class BoundarySearchDialog(QDialog):
     """Search dialog for rectangular region (boundary) names."""
 
