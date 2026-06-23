@@ -12,8 +12,9 @@ Covers two layers:
 Run:
     python tests/regression/test_handle_search.py [path/to/EE*.dxf]
 
-Without arguments it auto-discovers EE*.dxf in the project root. The DXF
-samples are not committed; the test is skipped (exit 0) when none are present.
+Without arguments it auto-discovers EE*.dxf in sample-dxf/ (symlinked from
+Tools/sample-dxf/, shared across projects). The DXF samples are not committed;
+the test is skipped (exit 0) when none are present.
 """
 
 import glob
@@ -23,6 +24,10 @@ import sys
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
+
+# Sample DXFs are shared across projects in Tools/sample-dxf/, symlinked into
+# each project's root as `sample-dxf`.
+_SAMPLE_DIR = os.path.join(_ROOT, 'sample-dxf')
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
@@ -183,7 +188,7 @@ def run_gui_smoke_case(file_path):
 
 def main():
     args = sys.argv[1:]
-    files = args if args else sorted(glob.glob(os.path.join(_ROOT, 'EE*.dxf')))
+    files = args if args else sorted(glob.glob(os.path.join(_SAMPLE_DIR, 'EE*.dxf')))
 
     if not files:
         print("No sample DXF files found — skipping test_handle_search.py")

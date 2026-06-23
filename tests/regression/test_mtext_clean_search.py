@@ -8,8 +8,9 @@ codes leaked into the searchable text.
 Run:
     python tests/regression/test_mtext_clean_search.py [path/to/EE*.dxf ...]
 
-Without arguments it auto-discovers EE*.dxf in the project root. The DXF samples
-are not committed; the test is skipped (exit 0) when none are present.
+Without arguments it auto-discovers EE*.dxf in sample-dxf/ (symlinked from
+Tools/sample-dxf/, shared across projects). The DXF samples are not committed;
+the test is skipped (exit 0) when none are present.
 """
 
 import glob
@@ -20,6 +21,8 @@ import sys
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
+
+_SAMPLE_DIR = os.path.join(_ROOT, 'sample-dxf')
 
 import ezdxf
 
@@ -89,7 +92,7 @@ def check_no_format_leak(paths):
 
 
 def main(argv):
-    paths = argv[1:] or sorted(glob.glob(os.path.join(_ROOT, 'EE*.dxf')))
+    paths = argv[1:] or sorted(glob.glob(os.path.join(_SAMPLE_DIR, 'EE*.dxf')))
     ok = run_unit_cases()
     if not paths:
         print("No EE*.dxf samples found — skipping sample-data check.")

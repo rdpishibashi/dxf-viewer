@@ -7,8 +7,9 @@ drawings. The overlay drawing itself is GUI code and is not covered here.
 Run:
     python tests/regression/test_region_search.py [path/to/EE*.dxf ...]
 
-The DXF samples are not committed; the sample-data checks are skipped (exit 0)
-when the files are absent.
+Samples are auto-discovered in sample-dxf/ (symlinked from Tools/sample-dxf/,
+shared across projects). The DXF samples are not committed; the sample-data
+checks are skipped (exit 0) when the files are absent.
 """
 
 import glob
@@ -20,6 +21,8 @@ import ezdxf
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
+
+_SAMPLE_DIR = os.path.join(_ROOT, 'sample-dxf')
 
 from core.region_detector import analyze_dxf_regions, extract_text_from_entity
 from core.region_search_manager import RegionSearchManager
@@ -225,7 +228,7 @@ def check_corner_search(name, analysis):
 
 def main(argv):
     paths = argv[1:] or sorted(
-        glob.glob(os.path.join(_ROOT, 'EE*.dxf')) + glob.glob(os.path.join(_ROOT, 'DE*.dxf')))
+        glob.glob(os.path.join(_SAMPLE_DIR, 'EE*.dxf')) + glob.glob(os.path.join(_SAMPLE_DIR, 'DE*.dxf')))
     if not paths:
         print("No EE*.dxf samples found — skipping region search regression.")
         print('PASS')
