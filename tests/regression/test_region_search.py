@@ -24,6 +24,26 @@ if _ROOT not in sys.path:
 
 _SAMPLE_DIR = os.path.join(_ROOT, 'sample-dxf')
 
+
+def _find_sample(name):
+    """Find a sample DXF by exact filename anywhere under the shared pool.
+
+    sample-dxf/ keeps loose files at its top level plus named subfolders for
+    curated sets (e.g. viewer-error/, problems/) — both files and folders are
+    expected to keep being added over time, and existing files may be moved
+    into a (new or existing) subfolder. A filename hardcoded in EXPECTED below
+    should still be found and tested even after such a move, instead of
+    silently dropping out of coverage because it's no longer at the top level.
+    """
+    direct = os.path.join(_SAMPLE_DIR, name)
+    if os.path.exists(direct):
+        return direct
+    for dirpath, _dirnames, filenames in os.walk(_SAMPLE_DIR):
+        if name in filenames:
+            return os.path.join(dirpath, name)
+    return direct
+
+
 from core.region_detector import analyze_dxf_regions, extract_text_from_entity
 from core.region_search_manager import RegionSearchManager
 
@@ -227,13 +247,20 @@ def check_corner_search(name, analysis):
 
 
 def main(argv):
-    paths = argv[1:] or sorted(
-        glob.glob(os.path.join(_SAMPLE_DIR, 'EE*.dxf')) + glob.glob(os.path.join(_SAMPLE_DIR, 'DE*.dxf')))
+    if argv[1:]:
+        paths = argv[1:]
+    else:
+        discovered = (glob.glob(os.path.join(_SAMPLE_DIR, 'EE*.dxf'))
+                      + glob.glob(os.path.join(_SAMPLE_DIR, 'DE*.dxf')))
+        # Make sure every EXPECTED fixture is included even if it has moved
+        # into a subfolder the flat top-level glob above doesn't see.
+        expected_paths = [_find_sample(name) for name in EXPECTED]
+        paths = sorted(set(discovered) | {p for p in expected_paths if os.path.exists(p)})
     if not paths:
         print("No EE*.dxf samples found — skipping region search regression.")
         print('PASS')
         return 0
-    ok = all(check_file(p) for p in paths)
+    ok = all(r is not False for r in [check_file(p) for p in paths])
     print('PASS' if ok else 'FAIL')
     return 0 if ok else 1
 
