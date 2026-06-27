@@ -662,6 +662,7 @@ matplotlib       # エクスポート機能で使用
 | export_utils.py の旧版 | `export_utils_v2.py` に置き換えられているが削除されていない |
 | Streamlit Cloud 非対応 | デスクトップ GUI アプリのためクラウドデプロイ不可 |
 | `EE6313-545-01D.dxf` の `B CHAMBER` 重複検出（疑い） | 同名 `B CHAMBER` 領域が2件、わずかに異なるポリゴンで検出される。`test_layer_consolidation.py` の周長カバレッジチェックで判明。`region_detector.py` 側の閉領域検出（重複除外ロジック）の調査が必要（未着手）。 |
+| **LINE 矩形の部品輪郭（未対応課題）** | `DE5434-563-03A.dxf` のように、lw=25/color=2 の LINE エンティティ 4 本で形成された「細い閉じた矩形（部品輪郭）」（実例: x=81~90, y=98~394.5、幅9単位）が領域境界線と同じ属性を持つ場合、アルゴリズムが部品輪郭と領域境界線を区別できない。部品輪郭の両端が縦仕切りを形成するケースでは、左右の子領域を独立した閉領域として検出できない。**将来対応案**: lw=25/color=2 が形成する「縦横比が高い閉矩形」を部品輪郭として自動判定し検出対象から除外する。あわせて、合体親領域の名称探索に「子領域の名称候補を除外した上で、底辺中央により近いラベルを優先する」ロジックを追加する（DXF-extract-labels v1.5.19 既知課題参照）。 |
 
 ---
 
@@ -677,7 +678,7 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-06-27（結合親矩形の除去（`_resolve_union_parents`）を追加。横/縦線分で2分割された兄弟矩形の合体親が planar graph の半面として誤検出されるケースを自動除去（`DE5401-405-21B.dxf` の L CHAMBER 重複、DXF-extract-labels v1.5.18 から移植）。`_detect_union_parents` + `_resolve_union_parents` を `_resolve_complement_faces` の直後（`analyze_dxf_regions` 内）に呼ぶ + 補完面解消（`_resolve_complement_faces`）を追加。兄弟矩形が縦辺を部分共有すると生じる補完面を検出・除去し、サブ領域に名称候補を継承する（`EE6313-545-01D.dxf` の B CHAMBER 重複検出バグを修正、DXF-extract-labels v1.5.17 から移植） + 図面枠の識別条件に color=7 を追加し `detect_drawing_frames` の
+*最終更新: 2026-06-28（`_name_union_parent()` に `exclude_names` パラメータを追加し同一フレーム内の既使用名称を除外（DXF-extract-labels v1.5.21 と同内容、EE6888-631-01A.dxf の 'SYSTEM' クエリ回帰を修正）。Search Boundary のデフォルト最小面積を 20%→10% に変更（`RegionSearchManager._DEFAULT_AREA_RATIO`・ダイアログ spinbox デフォルト・`get_analysis` キャッシュパスのデフォルト渡し、計3箇所）。 + `_resolve_union_parents()` を除去から命名に変更（DXF-extract-labels v1.5.20 と同内容）。合体親が検出された場合、子領域の採用済み候補を除外し底辺中央近接条件で親固有ラベルを探索する `_name_union_parent()` を追加。未採用ラベルがある場合は親を残して名称を更新（例: `DE5434-563-03A.dxf` で 'FX CHAMBER' を付与）、ない場合は従来通り除去。`_detect_union_parents()` の戻り値を dict 形式に変更。 + `_split_axis_aligned` の長さ比較を `> eps` → `>= eps` に変更し、長さがちょうど snap(2.0) ユニットの極短スタブを V/H 線分として検出するよう修正（DXF-extract-labels v1.5.19 と同内容）。LINE 矩形の部品輪郭課題を既知の制限に追記。 + 結合親矩形の除去（`_resolve_union_parents`）を追加。横/縦線分で2分割された兄弟矩形の合体親が planar graph の半面として誤検出されるケースを自動除去（`DE5401-405-21B.dxf` の L CHAMBER 重複、DXF-extract-labels v1.5.18 から移植）。`_detect_union_parents` + `_resolve_union_parents` を `_resolve_complement_faces` の直後（`analyze_dxf_regions` 内）に呼ぶ + 補完面解消（`_resolve_complement_faces`）を追加。兄弟矩形が縦辺を部分共有すると生じる補完面を検出・除去し、サブ領域に名称候補を継承する（`EE6313-545-01D.dxf` の B CHAMBER 重複検出バグを修正、DXF-extract-labels v1.5.17 から移植） + 図面枠の識別条件に color=7 を追加し `detect_drawing_frames` の
 `min_side=400` 固定閾値を撤廃（サンプル137件で検証、退行0件・従来検出不可22件が解消。
 DXF-extract-labels にも同じ修正を移植） + Consolidate Layers が領域線種の LWPOLYLINE を LINE/ARC に分解して
 境界判定できるよう対応 + `_collect_region_edges` の軸判定許容誤差を `1e-6`→`1e-3` に緩和し

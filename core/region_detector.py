@@ -402,9 +402,9 @@ def _split_axis_aligned(pairs, eps):
     V = []
     for s, en in pairs:
         x1, y1, x2, y2 = s[0], s[1], en[0], en[1]
-        if abs(y1 - y2) <= eps and abs(x1 - x2) > eps:
+        if abs(y1 - y2) <= eps and abs(x1 - x2) >= eps:
             H.append(((y1 + y2) / 2.0, min(x1, x2), max(x1, x2)))
-        elif abs(x1 - x2) <= eps and abs(y1 - y2) > eps:
+        elif abs(x1 - x2) <= eps and abs(y1 - y2) >= eps:
             V.append(((x1 + x2) / 2.0, min(y1, y2), max(y1, y2)))
     return H, V
 
@@ -1260,7 +1260,7 @@ def _resolve_complement_faces(regions, frame_area, next_id=None):
 
 
 def _detect_union_parents(regions, tol=1.0, area_tol=1.0):
-    """結合親領域（union parent）のインデックスリストを返す（DXF-viewer版）。
+    """結合親領域（union parent）の {親インデックス: (子Jインデックス, 子Kインデックス)} を返す（DXF-viewer版）。
 
     横/縦線分で2分割された兄弟矩形の合体親が検出条件:
       1. area(P) ≈ area(Q) + area(R)
@@ -1271,10 +1271,10 @@ def _detect_union_parents(regions, tol=1.0, area_tol=1.0):
     n = len(regions)
     corners = [r['corners'] for r in regions]
     areas = [r['area'] for r in regions]
-    to_remove = set()
+    result = {}
 
     for i in range(n):
-        if i in to_remove:
+        if i in result:
             continue
         for j in range(n):
             if j == i:
@@ -1296,19 +1296,140 @@ def _detect_union_parents(regions, tol=1.0, area_tol=1.0):
                     continue
                 if regions_overlap(regions[j]['polygon'], regions[k]['polygon']):
                     continue
-                to_remove.add(i)
+                result[i] = (j, k)
                 break
-            if i in to_remove:
+            if i in result:
                 break
 
-    return list(to_remove)
+    return result
 
 
-def _resolve_union_parents(regions):
-    """結合親領域を検出して除去した新リストを返す（DXF-viewer版）。"""
-    to_remove = set(_detect_union_parents(regions))
-    if not to_remove:
+def _name_union_parent(parent_region, child_regions, labels, cfg,
+                        exclude_names=None):
+    """合体親領域の名称候補を、子領域が未採用のラベルから探索して返す（DXF-viewer版）。
+
+    通常の `region_name_candidates` と異なる点:
+      - require_inside を緩和し、領域の外側（底辺の下方向）も探索対象にする
+      - 子領域がすでに採用した候補テキストを除外する
+      - exclude_names に含まれるテキストを除外する（他の非子領域が使用中の名称）
+      - 底辺中央 x 座標への近接度（中心距離）を距離の第2ソートキーにする
+
+    戻り値: (name_candidates, name_candidate_positions) のタプル。
+      name_candidates: [(distance, text), ...]
+      name_candidate_positions: {text: (x, y)}
+    """
+    polygon = parent_region['polygon']
+    max_dist = cfg.get('name_max_dist', 10.0)
+    min_dist = cfg.get('name_min_dist', 1.0)
+    min_letters = cfg.get('name_min_letters', 3)
+    exclude_terms = cfg.get('name_exclude_terms', ('NOTE', '☆'))
+    exclude_lowercase = cfg.get('name_exclude_lowercase', True)
+    exclude_circuit_symbols = cfg.get('exclude_circuit_symbols', True)
+    circuit_keep_terms = cfg.get('circuit_symbol_keep_terms', ('RACK',))
+
+    # 子領域が採用済みのテキスト + 他の非子領域が使用中の名称 を除外対象として収集
+    claimed = set(exclude_names or ())
+    for child in child_regions:
+        for _, t in child.get('name_candidates', []):
+            claimed.add(t)
+
+    # 底辺エッジとその x 全体中央を算出
+    bottom = _bottom_edges(polygon)
+    if not bottom:
+        return [], {}
+    all_x0 = min(seg[0] for seg in bottom)
+    all_x1 = max(seg[1] for seg in bottom)
+    center_x = (all_x0 + all_x1) / 2.0
+
+    def _label_ok(t):
+        if _count_letters(t) < min_letters:
+            return False
+        if exclude_lowercase and any('a' <= ch <= 'z' for ch in t):
+            return False
+        up = t.upper()
+        if any(term.upper() in up for term in (exclude_terms or ())):
+            return False
+        if exclude_circuit_symbols and not any(
+                k.upper() in up for k in (circuit_keep_terms or ())):
+            matched, _ = filter_non_circuit_symbols([t])
+            if matched:
+                return False
+        return True
+
+    # 底辺エッジへの距離（領域外も許容）と中央距離でスコアリング
+    scored = []
+    for (t, x, y) in labels:
+        if not _label_ok(t) or t in claimed:
+            continue
+        dist = _dist_to_bottom_edge((x, y), bottom)
+        if dist < min_dist or dist > max_dist:
+            continue
+        centrality = abs(x - center_x)
+        scored.append((dist, centrality, t, x, y))
+
+    scored.sort(key=lambda c: (c[0], c[1]))
+    seen = set()
+    out = []
+    name_positions = {}
+    for dist, _centrality, t, x, y in scored:
+        if t in seen:
+            continue
+        seen.add(t)
+        out.append((round(dist, 1), t))
+        name_positions[t] = (x, y)
+        if len(out) >= 8:
+            break
+    return out, name_positions
+
+
+def _resolve_union_parents(regions, labels=None, cfg=None):
+    """結合親領域を検出し、名称を再探索した上でリストを返す（DXF-viewer版）。
+
+    子領域が採用済みの名称候補を除外し、底辺中央近接条件を加味して
+    合体親固有の名称ラベルを探索する（`_name_union_parent` 参照）。
+    未採用ラベルが見つかった場合は親を残して名称を更新する。
+    見つからなかった場合は従来通り除去する。
+    `labels` が与えられない場合は全ての結合親を除去する（後方互換）。
+    """
+    parent_to_children = _detect_union_parents(regions)
+    if not parent_to_children:
         return regions
+
+    to_remove = set()
+    if labels is not None:
+        from collections import defaultdict as _dd
+        effective_cfg = cfg or {}
+        parent_indices = set(parent_to_children.keys())
+        child_indices = {c for cs in parent_to_children.values() for c in cs}
+        # フレーム別に「既使用名称」を管理（異なるフレームは独立して同名を許可）
+        parent_claimed_by_frame = _dd(set)
+        for parent_idx, (child_j, child_k) in parent_to_children.items():
+            parent = regions[parent_idx]
+            parent_frame = parent.get('frame', 0)
+            children = [regions[child_j], regions[child_k]]
+            # 同一フレーム内の非親・非子領域が使用中の名称を除外対象とする
+            same_frame_names = {
+                regions[i]['default_name']
+                for i in range(len(regions))
+                if i not in parent_indices and i not in child_indices
+                and regions[i].get('default_name')
+                and regions[i].get('frame', 0) == parent_frame
+            } | parent_claimed_by_frame[parent_frame]
+            new_cands, new_positions = _name_union_parent(
+                parent, children, labels, effective_cfg,
+                exclude_names=same_frame_names)
+            if new_cands:
+                # 未採用ラベルが見つかった → 親を残して名称を更新
+                parent['name_candidates'] = new_cands
+                parent['name_candidate_positions'] = new_positions
+                parent['default_name'] = new_cands[0][1]
+                parent_claimed_by_frame[parent_frame].add(new_cands[0][1])
+            else:
+                # 未採用ラベルがない → 従来通り除去
+                to_remove.add(parent_idx)
+    else:
+        to_remove = set(parent_to_children.keys())
+
     return [r for i, r in enumerate(regions) if i not in to_remove]
 
 
@@ -1499,7 +1620,7 @@ def analyze_dxf_regions(dxf_file, config=None):
                 })
                 rid += 1
         regions = _resolve_complement_faces(regions, frame_area, next_id=rid)
-        regions = _resolve_union_parents(regions)
+        regions = _resolve_union_parents(regions, labels=frame_labels, cfg=cfg)
         result['regions'] = regions
 
         del doc, msp

@@ -18,7 +18,7 @@ from core.region_detector import analyze_dxf_regions
 class RegionSearchManager:
     """Run and cache region detection, and match regions by name."""
 
-    _DEFAULT_AREA_RATIO = 0.20
+    _DEFAULT_AREA_RATIO = 0.10
 
     @staticmethod
     def get_analysis(tab_data, area_ratio=None):
@@ -29,7 +29,7 @@ class RegionSearchManager:
         detection reads from the file on disk, so it is unaffected by any color
         changes applied to the in-memory document.
 
-        When ``area_ratio`` differs from the default (0.20), the analysis is
+        When ``area_ratio`` differs from the default (0.10), the analysis is
         run with the custom threshold and the result is **not** stored in the
         cache (the cache always holds the default-threshold result so that
         subsequent default-threshold searches are still instant).
@@ -50,7 +50,8 @@ class RegionSearchManager:
             return analyze_dxf_regions(tab_data.file_path,
                                        config={'area_ratio': area_ratio})
         if tab_data.region_analysis is None:
-            tab_data.region_analysis = analyze_dxf_regions(tab_data.file_path)
+            tab_data.region_analysis = analyze_dxf_regions(
+                tab_data.file_path, config={'area_ratio': default_ratio})
         return tab_data.region_analysis
 
     @staticmethod
