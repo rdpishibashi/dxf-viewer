@@ -18,8 +18,10 @@ from core.region_detector import analyze_dxf_regions
 class RegionSearchManager:
     """Run and cache region detection, and match regions by name."""
 
+    _DEFAULT_AREA_RATIO = 0.20
+
     @staticmethod
-    def get_analysis(tab_data):
+    def get_analysis(tab_data, area_ratio=None):
         """Return the (cached) region analysis for a tab.
 
         Runs :func:`analyze_dxf_regions` against the tab's source file on first
@@ -27,15 +29,27 @@ class RegionSearchManager:
         detection reads from the file on disk, so it is unaffected by any color
         changes applied to the in-memory document.
 
+        When ``area_ratio`` differs from the default (0.20), the analysis is
+        run with the custom threshold and the result is **not** stored in the
+        cache (the cache always holds the default-threshold result so that
+        subsequent default-threshold searches are still instant).
+
         Args:
             tab_data: DXFTab instance (must have ``file_path``).
+            area_ratio: Minimum region area as a fraction of the frame area
+                (e.g. 0.10 for 10%).  None → use the default 0.20.
 
         Returns:
             The analysis dict, or None when the tab has no file path.
         """
+        if not tab_data.file_path:
+            return None
+        default_ratio = RegionSearchManager._DEFAULT_AREA_RATIO
+        use_custom = area_ratio is not None and abs(area_ratio - default_ratio) > 1e-6
+        if use_custom:
+            return analyze_dxf_regions(tab_data.file_path,
+                                       config={'area_ratio': area_ratio})
         if tab_data.region_analysis is None:
-            if not tab_data.file_path:
-                return None
             tab_data.region_analysis = analyze_dxf_regions(tab_data.file_path)
         return tab_data.region_analysis
 

@@ -3,7 +3,7 @@
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QGroupBox, QCheckBox, QLineEdit, QTextEdit,
-    QDialogButtonBox, QProgressBar
+    QDialogButtonBox, QProgressBar, QSpinBox
 )
 from PyQt5.QtGui import QColor, QFont
 from workers.ezdxf_worker import EzdxfWorker
@@ -411,6 +411,22 @@ class BoundarySearchDialog(QDialog):
         color_group.setLayout(color_layout)
         layout.addWidget(color_group)
 
+        # Minimum area threshold
+        area_group = QGroupBox("Minimum Region Area")
+        area_layout = QHBoxLayout()
+        area_layout.addWidget(QLabel("Minimum area (% of frame):"))
+        self.min_area_spin = QSpinBox()
+        self.min_area_spin.setRange(1, 99)
+        self.min_area_spin.setValue(20)
+        self.min_area_spin.setSuffix(" %")
+        self.min_area_spin.setToolTip(
+            "Regions smaller than this percentage of the drawing frame are ignored.\n"
+            "Lowering this value detects smaller regions but may slow down the search.")
+        area_layout.addWidget(self.min_area_spin)
+        area_layout.addStretch()
+        area_group.setLayout(area_layout)
+        layout.addWidget(area_group)
+
         # Keep the boundary highlight after Clear Search
         self.keep_highlight_check = QCheckBox(
             "Keep boundary highlight after Clear Search")
@@ -436,7 +452,8 @@ class BoundarySearchDialog(QDialog):
             'case_sensitive': self.case_sensitive_check.isChecked(),
             'whole_word': self.whole_word_check.isChecked(),
             'dim_color': self.get_selected_dim_color(),
-            'keep_highlight': self.keep_highlight_check.isChecked()
+            'keep_highlight': self.keep_highlight_check.isChecked(),
+            'min_area_pct': self.min_area_spin.value(),
         }
 
     def get_selected_dim_color(self):

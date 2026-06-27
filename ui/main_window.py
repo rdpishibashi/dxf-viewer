@@ -965,10 +965,11 @@ class DXFViewerApp(QMainWindow):
         # The first analysis (and the dim re-render) can take several seconds on
         # large files, so keep the busy cursor over the whole heavy operation.
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        area_ratio = params.get('min_area_pct', 20) / 100.0
         analysis = None
         matched = []
         try:
-            analysis = RegionSearchManager.get_analysis(tab_data)
+            analysis = RegionSearchManager.get_analysis(tab_data, area_ratio=area_ratio)
             if analysis and not analysis.get('error'):
                 if by_corners:
                     matched = RegionSearchManager.find_region_by_corners(analysis, corners)
