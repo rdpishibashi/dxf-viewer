@@ -365,6 +365,33 @@ def _count_connection_points_on_boundary(polygon, points, margin):
     return n
 
 
+def _polygon_sample_points(poly):
+    """ポリゴンの頂点＋各辺の中点を返す（重なり判定のサンプル点）。"""
+    pts = list(poly)
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        pts.append(((x1 + x2) / 2.0, (y1 + y2) / 2.0))
+    return pts
+
+
+def _polygon_has_point_strictly_inside(pts, poly, tol):
+    """pts のいずれかが poly の内部に（境界から tol より離れて）あるか。"""
+    for pt in pts:
+        if _point_in_polygon(pt, poly) and _dist_point_to_polygon(pt, poly) > tol:
+            return True
+    return False
+
+
+def regions_overlap(poly_a, poly_b, tol=1.0):
+    """2つの領域ポリゴンが重なっているか（完全内包・部分重複を含む）。隣接のみは False。"""
+    pts_a = _polygon_sample_points(poly_a)
+    pts_b = _polygon_sample_points(poly_b)
+    return (_polygon_has_point_strictly_inside(pts_a, poly_b, tol)
+            or _polygon_has_point_strictly_inside(pts_b, poly_a, tol))
+
+
 # ============================================================
 # 5. 線分処理の共通ユーティリティ（分類・クラスタリング・結合）
 # ============================================================
@@ -1129,7 +1156,111 @@ def _is_titleblock_region(polygon, labels):
 
 
 # ============================================================
-# 12. トップレベル解析（公開API）
+# 12. 補完面解消（兄弟矩形の部分共有辺で生じる補完面を分割）
+# ============================================================
+
+def _vertex_in_corner_set(vertex, corner_list, tol=1.0):
+    """頂点 vertex が corner_list の中に許容誤差 tol 以内で一致する点があるか。"""
+    vx, vy = vertex
+    return any(abs(vx - px) < tol and abs(vy - py) < tol for px, py in corner_list)
+
+
+def _detect_complement_pairs(regions, tol=1.0):
+    """補完面ペア (large_idx, small_idx) のリストを返す。
+
+    small の全頂点が large の頂点に含まれ、large が more vertices を持ち、かつ
+    2 領域が重なるものを「補完面関係」とする。
+    """
+    n = len(regions)
+    corners = [r['corners'] for r in regions]
+    results = []
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            ci, cj = corners[i], corners[j]
+            if len(ci) <= len(cj):
+                continue
+            if not all(_vertex_in_corner_set(v, ci, tol) for v in cj):
+                continue
+            if not regions_overlap(regions[i]['polygon'], regions[j]['polygon']):
+                continue
+            results.append((i, j))
+    return results
+
+
+def _extract_complement_subpolygons(large_corners, small_corners, tol=1.0):
+    """補完面 large の境界を辿り、small に含まれない追加頂点列を切り出してサブ領域を返す。"""
+    n = len(large_corners)
+
+    def is_shared(v):
+        return _vertex_in_corner_set(v, small_corners, tol)
+
+    flags = [is_shared(v) for v in large_corners]
+    subregions = []
+    visited_starts = set()
+    for i in range(n):
+        if flags[i] and not flags[(i + 1) % n]:
+            attachment_start = large_corners[i]
+            start_idx = (i + 1) % n
+            if start_idx in visited_starts:
+                continue
+            extra_seq = []
+            k = start_idx
+            while k < n + start_idx:
+                cur = large_corners[k % n]
+                if is_shared(cur):
+                    break
+                extra_seq.append(cur)
+                k += 1
+            if extra_seq:
+                visited_starts.add(start_idx)
+                subregions.append([attachment_start] + extra_seq)
+    return subregions
+
+
+def _resolve_complement_faces(regions, frame_area, next_id=None):
+    """補完面を検出してサブ領域に分割し、補完面を除去した新リストを返す（DXF-viewer 版）。"""
+    pairs = _detect_complement_pairs(regions)
+    if not pairs:
+        return regions
+
+    if next_id is None:
+        next_id = max((r['id'] for r in regions), default=-1) + 1
+
+    to_remove = {large_i for large_i, _ in pairs}
+    new_regions = [r for i, r in enumerate(regions) if i not in to_remove]
+
+    for large_i, small_i in pairs:
+        comp_face = regions[large_i]
+        base_face = regions[small_i]
+
+        claimed = {t for _, t in base_face.get('name_candidates', [])}
+        inherited_cands = [(d, t) for d, t in comp_face.get('name_candidates', [])
+                           if t not in claimed]
+        default_name = inherited_cands[0][1] if inherited_cands else ''
+
+        sub_polys = _extract_complement_subpolygons(comp_face['corners'], base_face['corners'])
+        for sub_poly in sub_polys:
+            sub_area = _polygon_area(sub_poly)
+            new_regions.append({
+                'id': next_id,
+                'frame': comp_face.get('frame', 0),
+                'polygon': sub_poly,
+                'corners': _polygon_corners(sub_poly),
+                'area': sub_area,
+                'area_pct': 100.0 * sub_area / frame_area if frame_area > 0 else 0.0,
+                'name_candidates': list(inherited_cands),
+                'default_name': default_name,
+                'name_candidate_positions': {},
+            })
+            next_id += 1
+
+    return new_regions
+
+
+# ============================================================
+# 13. トップレベル解析（公開API）
 # ============================================================
 
 def _run_region_detection(lines, det_cfg, frames, frame_area, frame_labels,
@@ -1314,6 +1445,7 @@ def analyze_dxf_regions(dxf_file, config=None):
                     'name_candidate_positions': cf['name_candidate_positions'],
                 })
                 rid += 1
+        regions = _resolve_complement_faces(regions, frame_area, next_id=rid)
         result['regions'] = regions
 
         del doc, msp

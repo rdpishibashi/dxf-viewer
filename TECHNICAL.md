@@ -677,7 +677,7 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-06-24（図面枠の識別条件に color=7 を追加し `detect_drawing_frames` の
+*最終更新: 2026-06-27（補完面解消（`_resolve_complement_faces`）を追加。兄弟矩形が縦辺を部分共有すると生じる補完面を検出・除去し、サブ領域に名称候補を継承する（`EE6313-545-01D.dxf` の B CHAMBER 重複検出バグを修正、DXF-extract-labels v1.5.17 から移植） + 図面枠の識別条件に color=7 を追加し `detect_drawing_frames` の
 `min_side=400` 固定閾値を撤廃（サンプル137件で検証、退行0件・従来検出不可22件が解消。
 DXF-extract-labels にも同じ修正を移植） + Consolidate Layers が領域線種の LWPOLYLINE を LINE/ARC に分解して
 境界判定できるよう対応 + `_collect_region_edges` の軸判定許容誤差を `1e-6`→`1e-3` に緩和し
