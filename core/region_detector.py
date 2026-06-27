@@ -1259,6 +1259,59 @@ def _resolve_complement_faces(regions, frame_area, next_id=None):
     return new_regions
 
 
+def _detect_union_parents(regions, tol=1.0, area_tol=1.0):
+    """結合親領域（union parent）のインデックスリストを返す（DXF-viewer版）。
+
+    横/縦線分で2分割された兄弟矩形の合体親が検出条件:
+      1. area(P) ≈ area(Q) + area(R)
+      2. P.corners ⊂ Q.corners ∪ R.corners
+      3. regions_overlap(P, Q) かつ regions_overlap(P, R)
+      4. NOT regions_overlap(Q, R)
+    """
+    n = len(regions)
+    corners = [r['corners'] for r in regions]
+    areas = [r['area'] for r in regions]
+    to_remove = set()
+
+    for i in range(n):
+        if i in to_remove:
+            continue
+        for j in range(n):
+            if j == i:
+                continue
+            for k in range(j + 1, n):
+                if k == i:
+                    continue
+                if abs(areas[i] - areas[j] - areas[k]) > area_tol:
+                    continue
+                if not all(
+                    _vertex_in_corner_set(v, corners[j], tol)
+                    or _vertex_in_corner_set(v, corners[k], tol)
+                    for v in corners[i]
+                ):
+                    continue
+                if not regions_overlap(regions[i]['polygon'], regions[j]['polygon']):
+                    continue
+                if not regions_overlap(regions[i]['polygon'], regions[k]['polygon']):
+                    continue
+                if regions_overlap(regions[j]['polygon'], regions[k]['polygon']):
+                    continue
+                to_remove.add(i)
+                break
+            if i in to_remove:
+                break
+
+    return list(to_remove)
+
+
+def _resolve_union_parents(regions):
+    """結合親領域を検出して除去した新リストを返す（DXF-viewer版）。"""
+    to_remove = set(_detect_union_parents(regions))
+    if not to_remove:
+        return regions
+    return [r for i, r in enumerate(regions) if i not in to_remove]
+
+
 # ============================================================
 # 13. トップレベル解析（公開API）
 # ============================================================
@@ -1446,6 +1499,7 @@ def analyze_dxf_regions(dxf_file, config=None):
                 })
                 rid += 1
         regions = _resolve_complement_faces(regions, frame_area, next_id=rid)
+        regions = _resolve_union_parents(regions)
         result['regions'] = regions
 
         del doc, msp
