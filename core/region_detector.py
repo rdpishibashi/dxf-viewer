@@ -140,6 +140,10 @@ DEFAULT_REGION_CONFIG = {
     'connection_point_margin': 0.1,    # 接続点が境界線上とみなす座標距離マージン
 }
 
+# 内部定数（マジックナンバーの明示）
+_FRAME_MARGIN = 5       # 図面枠フィルタリング時の座標マージン（枠境界に対し ±5 単位で線分を収集）
+_MAX_FACE_NODES = 200_000  # 半面探索の暴走ループ防止: 頂点数がこれを超えたら無効とみなす
+
 
 # ============================================================
 # 3. DXFジオメトリ収集
@@ -721,7 +725,7 @@ def _trace_faces(adj, node_xy):
                 cu, cv = cv, w
                 if (cu, cv) == (u, v):
                     break
-                if len(face) > 200000:
+                if len(face) > _MAX_FACE_NODES:
                     ok = False
                     break
             if ok and len(face) >= 4:
@@ -750,8 +754,9 @@ def _find_rectilinear_faces(Hm, Vm, eps):
 def _detect_regions(RH, RV, frame, frame_area, cfg, labels=None, circles=None):
     """1つの図面枠内で、面積>=枠面積×area_ratio の閉領域を検出する。"""
     xl, xr, y0, y1 = frame
-    Hf = [h for h in RH if y0 - 5 <= h[0] <= y1 + 5 and h[2] >= xl - 5 and h[1] <= xr + 5]
-    Vf = [v for v in RV if xl - 5 <= v[0] <= xr + 5 and v[2] >= y0 - 5 and v[1] <= y1 + 5]
+    m = _FRAME_MARGIN
+    Hf = [h for h in RH if y0 - m <= h[0] <= y1 + m and h[2] >= xl - m and h[1] <= xr + m]
+    Vf = [v for v in RV if xl - m <= v[0] <= xr + m and v[2] >= y0 - m and v[1] <= y1 + m]
     if not Hf or not Vf:
         return []
     # 共線セグメントの結合はレベル座標を厳密一致(merge_level_tol)で行い、別レベルの
@@ -768,7 +773,7 @@ def _detect_regions(RH, RV, frame, frame_area, cfg, labels=None, circles=None):
     bridge_h = cfg.get('bridge_horizontal_gaps', False)
     cband = cfg.get('connection_point_margin', 2.0)
     ctol = cfg.get('corner_tol', 0.5)
-    fcircles = [c for c in (circles or []) if xl - 5 <= c[0] <= xr + 5 and y0 - 5 <= c[1] <= y1 + 5]
+    fcircles = [c for c in (circles or []) if xl - m <= c[0] <= xr + m and y0 - m <= c[1] <= y1 + m]
     # 横線分の端点（縦ギャップのコーナー相手判定用）
     h_endpoints = []
     for (hy, hx0, hx1) in Hf:
