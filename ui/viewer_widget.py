@@ -61,6 +61,26 @@ class _OutlineHighlightGraphicsView(CADGraphicsViewWithOverlay):
     whose shape() already approximates their boundingRect()).
     """
 
+    def mouseMoveEvent(self, event):
+        # Without this guard, cursor movement alone (no button pressed) pans
+        # the view in large multi-drawing DXF files.  The cause is that
+        # AnchorUnderMouse — set by CADGraphicsView.__init__ — scrolls the
+        # scene to keep the mouse-under-scene-point fixed whenever any layout
+        # shift (e.g. sidebar label refresh) slightly resizes the viewport.
+        # For a small single-drawing scene the scroll range is ~0 so the
+        # effect is invisible; for a wide multi-drawing scene (scene >> viewport)
+        # even a 1-pixel viewport change causes a large visible pan.
+        # Fix: when no button is pressed, restore the scroll position after
+        # calling super() so hover detection still runs but panning cannot occur.
+        if event.buttons() & Qt.LeftButton:
+            super().mouseMoveEvent(event)
+            return
+        h = self.horizontalScrollBar().value()
+        v = self.verticalScrollBar().value()
+        super().mouseMoveEvent(event)
+        self.horizontalScrollBar().setValue(h)
+        self.verticalScrollBar().setValue(v)
+
     def drawForeground(self, painter, rect):
         CADGraphicsView.drawForeground(self, painter, rect)
         if self._selected_items and self._mark_selection:
@@ -100,6 +120,11 @@ class PinchZoomCADViewer(CADViewer):
         # Set default background color to black
         if self.graphics_view:
             self.set_background_color(QColor(0, 0, 0))
+            # Use center (not mouse position) as anchor when the viewport is
+            # resized (e.g. window resize), so that a viewport size change
+            # does not shift the scene under the cursor.  TransformationAnchor
+            # stays AnchorUnderMouse so wheel-zoom still uses the cursor point.
+            self.graphics_view.setResizeAnchor(QGraphicsView.AnchorViewCenter)
 
     def _install_click_through_backend(self):
         """Inject _ClickThroughBackend into the CADWidget.
