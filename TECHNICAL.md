@@ -678,7 +678,9 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-07-03（`core/region_detector.py` にレベル汚染フォールバック（4パス目）を追加（DXF-extract-labels v1.5.23 と同期）。`_merge_collinear` に `span_levels` 引数を追加しスパン単位レベル算出に対応。`DEFAULT_REGION_CONFIG` に `span_level_merge: False` を追加。`analyze_dxf_regions` に4パス目を追加（ゲート条件: 閾値超えゼロの枠があり かつ 他枠に閾値超え領域がある場合のみ発動）: 「閾値超え候補ゼロの枠」に限りスパン単位レベルで再検出し、回復した領域の名称が他枠の検出済み名称と一致する枠のみ置き換える。EE6892-039-05B.dxf 2ページ目 SYSTEM I/F BOX の検出漏れを解消。回帰テスト PASS（EE6868/EE6888/EE6492/EE6313 各ファイル確認）。）*
+*最終更新: 2026-07-03（`ui/viewer_widget.py`: 複数図面 DXF でカーソルを動かすだけで画面がパンする不具合を修正。`_OutlineHighlightGraphicsView` に `mouseMoveEvent` オーバーライドを追加し、左ボタン未押下時は `super().mouseMoveEvent()` 呼び出し前後のスクロール位置を保存・復元することで、ホバー検出は維持しつつカーソル移動による意図しないパンを防ぐ。加えて `PinchZoomCADViewer.__init__` で `setResizeAnchor(AnchorViewCenter)` を設定し、ビューポートサイズ変化時のパン（`AnchorUnderMouse` のデフォルト動作）を無効化（多図面の大スクロール範囲では 1px のビューポート変化でも大幅なパンになっていた）。`TransformationAnchor` は `AnchorUnderMouse` のまま維持（ホイールズームはカーソル位置を中心に行う）。回帰テスト PASS。）*
+
+*（同日: `core/region_detector.py` にレベル汚染フォールバック（4パス目）を追加（DXF-extract-labels v1.5.23 と同期）。`_merge_collinear` に `span_levels` 引数を追加しスパン単位レベル算出に対応。`DEFAULT_REGION_CONFIG` に `span_level_merge: False` を追加。`analyze_dxf_regions` に4パス目を追加（ゲート条件: 閾値超えゼロの枠があり かつ 他枠に閾値超え領域がある場合のみ発動）: 「閾値超え候補ゼロの枠」に限りスパン単位レベルで再検出し、回復した領域の名称が他枠の検出済み名称と一致する枠のみ置き換える。EE6892-039-05B.dxf 2ページ目 SYSTEM I/F BOX の検出漏れを解消。回帰テスト PASS（EE6868/EE6888/EE6492/EE6313 各ファイル確認）。）*
 
 ---
 
