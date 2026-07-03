@@ -189,6 +189,16 @@ DXF-viewer 独自のツールバー／メニューで代替できる。
     検索ヒットしなかった。`plain_mtext` 化でこれを解消（EE6868/EE6888 計 12,159 件で書式コード漏れゼロ・退行なしを確認）。
   - 副次効果: 前後空白・全角空白・`\P` 段落跨ぎの正規化。`%%c`/`%%d`/`%%p` は Ø/°/± へ変換。
   - 回帰テスト: `tests/regression/test_mtext_clean_search.py`
+- **全角/半角非依存マッチング（`utils/text_utils.normalize_width()`、2026-07-03 追加）**:
+  検索語・比較対象の両方に `unicodedata.normalize('NFKC', ...)` を適用してから比較する
+  （`Ａ`→`A`、`１`→`1`、全角スペース/スラッシュ→半角 等。かな・漢字は対象外）。半角で
+  入力した検索語が全角のみのラベル（例 `ＳＹＳＴＥＭ　Ｉ／Ｆ　ＢＯＸ`）にヒットし、
+  逆に全角で入力した検索語が半角ラベルにもヒットする。表示・ハイライト対象の
+  `entity_text` 自体は元の全角/半角のまま変更しない（比較用のローカルコピーのみ正規化）。
+  `RegionSearchManager.find_matching_regions()`（Search Boundary）にも同じ正規化を適用。
+  回帰テスト: `tests/regression/test_mtext_clean_search.py`（`WIDTH_CASES`・
+  `check_width_insensitive_search`）、`tests/regression/test_region_search.py`
+  （`EE6868-500-01C.dxf`/`EE6492-039-38A.dxf` に双方向クエリを追加）。
 
 ### Handle 検索 / Search Handle（`core/search_manager.py`、2026-06-23 追加）
 
@@ -683,6 +693,8 @@ matplotlib       # エクスポート機能で使用
 *（同日: `core/region_detector.py` にレベル汚染フォールバック（4パス目）を追加（DXF-extract-labels v1.5.23 と同期）。`_merge_collinear` に `span_levels` 引数を追加しスパン単位レベル算出に対応。`DEFAULT_REGION_CONFIG` に `span_level_merge: False` を追加。`analyze_dxf_regions` に4パス目を追加（ゲート条件: 閾値超えゼロの枠があり かつ 他枠に閾値超え領域がある場合のみ発動）: 「閾値超え候補ゼロの枠」に限りスパン単位レベルで再検出し、回復した領域の名称が他枠の検出済み名称と一致する枠のみ置き換える。EE6892-039-05B.dxf 2ページ目 SYSTEM I/F BOX の検出漏れを解消。回帰テスト PASS（EE6868/EE6888/EE6492/EE6313 各ファイル確認）。）*
 
 *（同日: `core/region_detector.py` の領域名候補の英字判定（`_count_letters`）を全角英字（Ａ-Ｚ, ａ-ｚ）にも対応（DXF-extract-labels v1.5.24 と同期）。従来は ASCII 半角英字のみを英字と判定していたため、領域名ラベルが全角文字のみで書かれた図面（例: `ＳＹＳＴＥＭ　Ｉ／Ｆ　ＢＯＸ`）では `name_min_letters`(3) 条件を常に満たせず、名称候補が一切検出できなかった（DXF-extract-labelsでのユーザー報告により発覚。region 検出機能導入時点から一貫した未対応で退行ではないことを確認済み）。`_is_letter()`（全角対応の英字判定）・`_is_lowercase_letter()`（全角小文字も含む小文字判定）を追加し、`_count_letters()`・`_filter_eligible_labels()`・`_is_valid_name_candidate()` の3箇所を更新。`sample-dxf/problems/EE6492-039-38A.dxf` を対象に `tests/regression/test_region_search.py` の `EXPECTED` へケースを追加、全回帰テスト PASS。）*
+
+*（同日: Search Text（`core/search_manager.py`）・Search Boundary（`core/region_search_manager.py`）を全角/半角非依存マッチングに対応（ユーザー報告: 半角で検索語を入力しても全角ラベルを検出したい、逆に全角検索語でも半角ラベルを検出したい）。`utils/text_utils.py` に `normalize_width()`（`unicodedata.normalize('NFKC', ...)` による全角→半角折り畳み。かな・漢字は対象外）を追加し、`SearchManager.find_text_entities()` の `search_text`/`compare_text` と `RegionSearchManager._name_matches()` の `query`/`haystack`（`whole_word` の正規表現含む）に適用。ハイライト・表示に使う `entity_text`/`default_name` 自体は元の全角/半角のまま変更しない（比較用のローカルコピーのみ正規化）。回帰テスト: `test_mtext_clean_search.py` に `WIDTH_CASES`（`normalize_width` 単体）・`check_width_insensitive_search`（`EE6492-039-38A.dxf` の全角のみラベルへ半角クエリがヒットすることを確認）を追加、`test_region_search.py` の `EE6868-500-01C.dxf`（半角ラベル）・`EE6492-039-38A.dxf`（全角ラベル）に双方向クエリを追加。全回帰テスト PASS。）*
 
 ---
 

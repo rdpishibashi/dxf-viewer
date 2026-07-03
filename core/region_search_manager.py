@@ -13,6 +13,7 @@ import math
 import re
 
 from core.region_detector import analyze_dxf_regions
+from utils.text_utils import normalize_width
 
 
 class RegionSearchManager:
@@ -93,6 +94,9 @@ class RegionSearchManager:
         if not analysis or not query:
             return []
 
+        # Width-fold (zenkaku<->hankaku) so a query typed in either width
+        # matches a region name written in the other.
+        query = normalize_width(query)
         regex = None
         if whole_word:
             flags = 0 if case_sensitive else re.IGNORECASE
@@ -111,9 +115,10 @@ class RegionSearchManager:
 
     @staticmethod
     def _name_matches(name, needle, regex, case_sensitive):
+        haystack = normalize_width(name)
         if regex is not None:
-            return regex.search(name) is not None
-        haystack = name if case_sensitive else name.lower()
+            return regex.search(haystack) is not None
+        haystack = haystack if case_sensitive else haystack.lower()
         return needle in haystack
 
     @staticmethod

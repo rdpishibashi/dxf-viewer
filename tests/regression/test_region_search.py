@@ -58,6 +58,11 @@ EXPECTED = {
             ('rack1', True, False): 0,      # case-sensitive miss
             ('MPD', False, False): 10,      # 'MPD RACK1' + 'MPD RACK2'
             ('NONEXIST', False, False): 0,
+            # Width-insensitive matching: a zenkaku query must still match
+            # these hankaku-labeled regions (normalize_width folds it before
+            # comparing; see utils/text_utils.py).
+            ('ＲＡＣＫ１', False, False): 18,
+            ('ＭＰＤ', False, False): 10,
         },
     },
     'EE6888-602-01A.dxf': {
@@ -150,6 +155,9 @@ EXPECTED = {
         'queries': {
             ('ＳＹＳＴＥＭ', False, False): 4,
             ('NONEXIST', False, False): 0,
+            # Reverse direction: a hankaku query must match these zenkaku-only
+            # labeled regions too (width-insensitive matching).
+            ('SYSTEM', False, False): 4,
         },
     },
 }
