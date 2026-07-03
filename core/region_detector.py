@@ -881,6 +881,39 @@ def _top_edges(polygon, level_tol=2.0):
     return segs
 
 
+def _notch_bottom_edges(polygon, level_tol=2.0, probe=0.5):
+    """最下端レベル以外にある下向き横エッジ群 [(x0,x1,y), ...] を返す。
+
+    「下向き」＝エッジ中点の probe 直上が領域内・probe 直下が領域外。
+    長方形では常に空（下向きエッジは最下端のみ）で、L字型等の非矩形ポリゴンの
+    切り欠き部の横エッジだけが該当する。実例: EE6491-039-04A.dxf の
+    SYSTEM I/F BOX。FLAT CABLE 部と一体のL字型領域で、名称ラベルが切り欠き部の
+    下向きエッジ（最下端ではない）の直上にあるため、最下端エッジ（Tier1）と
+    上端エッジ（Tier2）だけを見る従来の探索では候補から漏れていた。
+    `region_name_candidates` が Tier2 スキャンにこのエッジ群を加えて使う。
+    （DXF-extract-labels v1.5.27 から移植）
+    """
+    min_y = min(p[1] for p in polygon)
+    segs = []
+    n = len(polygon)
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i + 1) % n]
+        if abs(y1 - y2) >= 0.5:
+            continue
+        my = (y1 + y2) / 2.0
+        if abs(my - min_y) <= level_tol:
+            continue  # 最下端レベルは Tier1（_bottom_edges）の担当
+        x0, x1s = min(x1, x2), max(x1, x2)
+        if x1s - x0 < probe:  # 極小エッジは内外判定が不安定なため除外
+            continue
+        mx = (x0 + x1s) / 2.0
+        if (_point_in_polygon((mx, my + probe), polygon)
+                and not _point_in_polygon((mx, my - probe), polygon)):
+            segs.append((x0, x1s, my))
+    return segs
+
+
 def _vertical_edges_at_extreme(polygon, side, level_tol=2.0):
     """ポリゴンの左端(side='left')または右端(side='right')にある縦エッジ群
     [(y0,y1,x), ...] を返す（図面全体が90°回転している場合の下端/上端の代替）。"""
@@ -1017,7 +1050,9 @@ def region_name_candidates(polygon, labels, max_dist=10.0, min_dist=1.0, min_let
         dist_fn = _dist_to_vertical_edge
     else:
         tier1_edges = _bottom_edges(polygon)
-        tier2_edges = _top_edges(polygon)
+        # Tier2 は上端エッジに加え、L字型等の切り欠き部の下向きエッジも対象にする
+        # （切り欠き直上の名称ラベルを拾う。詳細は _notch_bottom_edges docstring）。
+        tier2_edges = _top_edges(polygon) + _notch_bottom_edges(polygon)
         dist_fn = _dist_to_bottom_edge
 
     tiered = []
@@ -1542,6 +1577,55 @@ def _count_threshold_hits(frame_cands, single_thr):
     return sum(1 for cl in frame_cands for cf in cl if cf['area'] >= single_thr)
 
 
+def _remove_overlap_claimed_candidates(regions):
+    """重なる領域同士で、同じ名称候補テキストをより近い側（小さい距離）の領域
+    だけに残し、遠い側からは取り除く（`regions_overlap()` が True の領域間のみ）。
+
+    `region_name_candidates()` は領域ごとに独立して評価するため、入れ子/重なる
+    2領域（例 `EE6313-546-01E.dxf` の外側`B CHAMBER`・内側`BAKE HEATER UNIT RX`）
+    では、内側領域の名称ラベルが外側領域の境界からも Tier1/2 の許容距離内に
+    収まり、外側領域の候補リストにも内側領域の名称が残ることがある。内側領域が
+    その名称をより高い確信度（小さい距離）で持っている以上、外側領域の default
+    がそれになるのは誤り。同じテキストについて、重なる領域の中で最小距離を持つ
+    領域だけに候補を残し、他の重なる領域からは除去する。`default_name` も
+    除去結果に応じて再計算する。距離が等しい場合はどちらからも除去しない。
+
+    Search Boundary は `default_name` のみ照合するため、この整理が無いと
+    L字型領域（EE6491-039-04A.dxf）で、ネストされた HEATER CTRL B.D の名称が
+    L字側の default に残り、本来の名称 SYSTEM I/F BOX が検索でヒットしない。
+    （DXF-extract-labels v1.5.14 相当から移植。`default_name_tier` を持たない
+    DXF-viewer 版に合わせ Tier 再計算は省略）
+    """
+    n = len(regions)
+    original = [r['name_candidates'] for r in regions]  # 比較は変更前のスナップショットで行う
+    overlap_cache = {}
+
+    def _overlap(i, j):
+        key = (i, j) if i < j else (j, i)
+        if key not in overlap_cache:
+            overlap_cache[key] = regions_overlap(regions[i]['polygon'], regions[j]['polygon'])
+        return overlap_cache[key]
+
+    for i in range(n):
+        cands = original[i]
+        if not cands:
+            continue
+        kept = []
+        for d, t in cands:
+            claimed_by_closer = False
+            for j in range(n):
+                if j == i or not _overlap(i, j):
+                    continue
+                if any(t2 == t and d2 < d for d2, t2 in original[j]):
+                    claimed_by_closer = True
+                    break
+            if not claimed_by_closer:
+                kept.append((d, t))
+        if len(kept) != len(cands):
+            regions[i]['name_candidates'] = kept
+            regions[i]['default_name'] = kept[0][1] if kept else ''
+
+
 def analyze_dxf_regions(dxf_file, config=None):
     """DXFファイルを解析し、図面枠・閉領域（名称候補つき）・図面枠内ラベルを返す。
 
@@ -1691,6 +1775,7 @@ def analyze_dxf_regions(dxf_file, config=None):
                 rid += 1
         regions = _resolve_complement_faces(regions, frame_area, next_id=rid)
         regions = _resolve_union_parents(regions, labels=frame_labels, cfg=cfg)
+        _remove_overlap_claimed_candidates(regions)
         result['regions'] = regions
 
         del doc, msp

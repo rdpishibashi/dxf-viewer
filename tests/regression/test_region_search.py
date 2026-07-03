@@ -160,6 +160,24 @@ EXPECTED = {
             ('SYSTEM', False, False): 4,
         },
     },
+    # L字型領域（FLAT CABLE 部と一体、切り欠きでつながる）の図面。名称ラベル
+    # SYSTEM I/F BOX は切り欠き部の下向き横エッジ（最下端ではない）の直上にあり、
+    # 最下端/最上端エッジしか見ない旧 Tier1/2 探索では候補から漏れていた
+    # （DXF-extract-labels v1.5.27 の `_notch_bottom_edges` を移植、2026-07-03）。
+    # 併せて `_remove_overlap_claimed_candidates` も移植: ネストされた
+    # HEATER CTRL B.D の名称ラベルはL字の最下端エッジ近傍（Tier1）でもあるため、
+    # 整理しないとL字側の default が HEATER CTRL のままになり、default のみ照合の
+    # Search Boundary で SYSTEM I/F BOX がヒットしない。
+    'EE6491-039-04A.dxf': {
+        'frames': 1,
+        'min_regions': 2,
+        'queries': {
+            ('SYSTEM I/F BOX', False, False): 1,
+            ('HEATER CTRL', False, False): 1,
+            ('FLAT CABLE', False, False): 0,  # 第2候補には残るが default ではない
+            ('NONEXIST', False, False): 0,
+        },
+    },
 }
 
 
