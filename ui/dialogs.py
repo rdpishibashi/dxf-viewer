@@ -9,6 +9,71 @@ from PyQt5.QtGui import QColor, QFont
 from workers.ezdxf_worker import EzdxfWorker
 
 
+# ---------------------------------------------------------------------------
+# 検索系3ダイアログ（Text/Handle/Boundary）で共通の部品
+# ---------------------------------------------------------------------------
+
+# 非マッチエンティティの淡色化に使う色（DXF color index, RGB）。
+# Black は index 0 が BYBLOCK のため 250、Light Gray は 251 を使う。
+_DIM_COLOR_MAP = {
+    "Light Gray": (251, 0xC0C0C0),
+    "Gray": (8, 0x808080),
+    "White": (7, 0xFFFFFF),
+    "Black": (250, 0x000000),
+    "Red": (1, 0xFF0000),
+    "Yellow": (2, 0xFFFF00),
+    "Green": (3, 0x00FF00),
+    "Cyan": (4, 0x00FFFF),
+    "Blue": (5, 0x0000FF),
+    "Magenta": (6, 0xFF00FF),
+}
+
+
+def _add_dim_color_group(layout):
+    """「Non-matching Entity Color」グループを layout に追加し、コンボを返す。"""
+    color_group = QGroupBox("Non-matching Entity Color")
+    color_layout = QVBoxLayout()
+
+    combo = QComboBox()
+    combo.addItems(list(_DIM_COLOR_MAP.keys()))
+    combo.setCurrentText("Light Gray")
+
+    color_layout.addWidget(QLabel("Color for non-matching entities:"))
+    color_layout.addWidget(combo)
+    color_group.setLayout(color_layout)
+    layout.addWidget(color_group)
+    return combo
+
+
+def _selected_dim_color(combo):
+    """コンボの選択から (DXF color index, RGB) を返す。"""
+    return _DIM_COLOR_MAP.get(combo.currentText(), (251, 0xC0C0C0))
+
+
+def _add_search_options_row(layout):
+    """case-sensitive / whole-word のチェックボックス行を追加して返す。"""
+    options_layout = QHBoxLayout()
+    case_check = QCheckBox("Case sensitive")
+    whole_word_check = QCheckBox("Whole words only")
+    options_layout.addWidget(case_check)
+    options_layout.addWidget(whole_word_check)
+    layout.addLayout(options_layout)
+    return case_check, whole_word_check
+
+
+def _add_accept_cancel_row(dialog, layout, accept_label):
+    """accept/reject に接続したボタン行を追加し、(accept, cancel) を返す。"""
+    button_layout = QHBoxLayout()
+    accept_button = QPushButton(accept_label)
+    accept_button.clicked.connect(dialog.accept)
+    cancel_button = QPushButton("Cancel")
+    cancel_button.clicked.connect(dialog.reject)
+    button_layout.addWidget(accept_button)
+    button_layout.addWidget(cancel_button)
+    layout.addLayout(button_layout)
+    return accept_button, cancel_button
+
+
 class BackgroundColorDialog(QDialog):
     """Dialog for changing background color."""
 
@@ -46,14 +111,8 @@ class BackgroundColorDialog(QDialog):
         layout.addWidget(color_group)
 
         # Buttons
-        button_layout = QHBoxLayout()
-        self.apply_button = QPushButton("Apply")
-        self.apply_button.clicked.connect(self.accept)
-        self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.clicked.connect(self.reject)
-        button_layout.addWidget(self.apply_button)
-        button_layout.addWidget(self.cancel_button)
-        layout.addLayout(button_layout)
+        self.apply_button, self.cancel_button = _add_accept_cancel_row(
+            self, layout, "Apply")
 
     def get_selected_color(self):
         """Get the selected QColor."""
@@ -115,14 +174,8 @@ class ColorChangeDialog(QDialog):
         layout.addWidget(color_group)
 
         # Buttons
-        button_layout = QHBoxLayout()
-        self.apply_button = QPushButton("Apply")
-        self.apply_button.clicked.connect(self.accept)
-        self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.clicked.connect(self.reject)
-        button_layout.addWidget(self.apply_button)
-        button_layout.addWidget(self.cancel_button)
-        layout.addLayout(button_layout)
+        self.apply_button, self.cancel_button = _add_accept_cancel_row(
+            self, layout, "Apply")
 
     def get_selected_color(self):
         """Get the selected DXF color index and RGB value."""
@@ -170,52 +223,18 @@ class TextSearchDialog(QDialog):
         search_layout.addWidget(self.search_input)
 
         # Search options
-        options_layout = QHBoxLayout()
-        self.case_sensitive_check = QCheckBox("Case sensitive")
-        self.whole_word_check = QCheckBox("Whole words only")
-        options_layout.addWidget(self.case_sensitive_check)
-        options_layout.addWidget(self.whole_word_check)
-        search_layout.addLayout(options_layout)
+        self.case_sensitive_check, self.whole_word_check = \
+            _add_search_options_row(search_layout)
 
         search_group.setLayout(search_layout)
         layout.addWidget(search_group)
 
         # Non-matching entity color selection
-        color_group = QGroupBox("Non-matching Entity Color")
-        color_layout = QVBoxLayout()
-
-        self.color_combo = QComboBox()
-        self.color_combo.addItems([
-            "Light Gray",
-            "Gray",
-            "White",
-            "Black",
-            "Red",
-            "Yellow",
-            "Green",
-            "Cyan",
-            "Blue",
-            "Magenta"
-        ])
-
-        # Set Light Gray as default
-        self.color_combo.setCurrentText("Light Gray")
-
-        color_layout.addWidget(QLabel("Color for non-matching entities:"))
-        color_layout.addWidget(self.color_combo)
-
-        color_group.setLayout(color_layout)
-        layout.addWidget(color_group)
+        self.color_combo = _add_dim_color_group(layout)
 
         # Buttons
-        button_layout = QHBoxLayout()
-        self.search_button = QPushButton("Search")
-        self.search_button.clicked.connect(self.accept)
-        self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.clicked.connect(self.reject)
-        button_layout.addWidget(self.search_button)
-        button_layout.addWidget(self.cancel_button)
-        layout.addLayout(button_layout)
+        self.search_button, self.cancel_button = _add_accept_cancel_row(
+            self, layout, "Search")
 
         # Focus on search input
         self.search_input.setFocus()
@@ -231,20 +250,7 @@ class TextSearchDialog(QDialog):
 
     def get_selected_dim_color(self):
         """Get the selected DXF color index and RGB value for dimmed entities."""
-        color_map = {
-            "Light Gray": (251, 0xC0C0C0),
-            "Gray": (8, 0x808080),
-            "White": (7, 0xFFFFFF),
-            "Black": (250, 0x000000),
-            "Red": (1, 0xFF0000),
-            "Yellow": (2, 0xFFFF00),
-            "Green": (3, 0x00FF00),
-            "Cyan": (4, 0x00FFFF),
-            "Blue": (5, 0x0000FF),
-            "Magenta": (6, 0xFF00FF)
-        }
-        color_name = self.color_combo.currentText()
-        return color_map.get(color_name, (251, 0xC0C0C0))
+        return _selected_dim_color(self.color_combo)
 
 
 class HandleSearchDialog(QDialog):
@@ -275,39 +281,11 @@ class HandleSearchDialog(QDialog):
         layout.addWidget(search_group)
 
         # Non-matching entity color selection
-        color_group = QGroupBox("Non-matching Entity Color")
-        color_layout = QVBoxLayout()
-
-        self.color_combo = QComboBox()
-        self.color_combo.addItems([
-            "Light Gray",
-            "Gray",
-            "White",
-            "Black",
-            "Red",
-            "Yellow",
-            "Green",
-            "Cyan",
-            "Blue",
-            "Magenta"
-        ])
-        self.color_combo.setCurrentText("Light Gray")
-
-        color_layout.addWidget(QLabel("Color for non-matching entities:"))
-        color_layout.addWidget(self.color_combo)
-
-        color_group.setLayout(color_layout)
-        layout.addWidget(color_group)
+        self.color_combo = _add_dim_color_group(layout)
 
         # Buttons
-        button_layout = QHBoxLayout()
-        self.search_button = QPushButton("Search")
-        self.search_button.clicked.connect(self.accept)
-        self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.clicked.connect(self.reject)
-        button_layout.addWidget(self.search_button)
-        button_layout.addWidget(self.cancel_button)
-        layout.addLayout(button_layout)
+        self.search_button, self.cancel_button = _add_accept_cancel_row(
+            self, layout, "Search")
 
         self.search_input.setFocus()
 
@@ -320,19 +298,7 @@ class HandleSearchDialog(QDialog):
 
     def get_selected_dim_color(self):
         """Get the selected DXF color index and RGB value for dimmed entities."""
-        color_map = {
-            "Light Gray": (251, 0xC0C0C0),
-            "Gray": (8, 0x808080),
-            "White": (7, 0xFFFFFF),
-            "Black": (250, 0x000000),
-            "Red": (1, 0xFF0000),
-            "Yellow": (2, 0xFFFF00),
-            "Green": (3, 0x00FF00),
-            "Cyan": (4, 0x00FFFF),
-            "Blue": (5, 0x0000FF),
-            "Magenta": (6, 0xFF00FF)
-        }
-        return color_map.get(self.color_combo.currentText(), (251, 0xC0C0C0))
+        return _selected_dim_color(self.color_combo)
 
 
 class BoundarySearchDialog(QDialog):
@@ -356,12 +322,8 @@ class BoundarySearchDialog(QDialog):
         search_layout.addWidget(self.search_input)
 
         # Search options
-        options_layout = QHBoxLayout()
-        self.case_sensitive_check = QCheckBox("Case sensitive")
-        self.whole_word_check = QCheckBox("Whole words only")
-        options_layout.addWidget(self.case_sensitive_check)
-        options_layout.addWidget(self.whole_word_check)
-        search_layout.addLayout(options_layout)
+        self.case_sensitive_check, self.whole_word_check = \
+            _add_search_options_row(search_layout)
 
         search_group.setLayout(search_layout)
         layout.addWidget(search_group)
@@ -387,29 +349,7 @@ class BoundarySearchDialog(QDialog):
         layout.addWidget(corners_group)
 
         # Non-matching entity color selection
-        color_group = QGroupBox("Non-matching Entity Color")
-        color_layout = QVBoxLayout()
-
-        self.color_combo = QComboBox()
-        self.color_combo.addItems([
-            "Light Gray",
-            "Gray",
-            "White",
-            "Black",
-            "Red",
-            "Yellow",
-            "Green",
-            "Cyan",
-            "Blue",
-            "Magenta"
-        ])
-        self.color_combo.setCurrentText("Light Gray")
-
-        color_layout.addWidget(QLabel("Color for non-matching entities:"))
-        color_layout.addWidget(self.color_combo)
-
-        color_group.setLayout(color_layout)
-        layout.addWidget(color_group)
+        self.color_combo = _add_dim_color_group(layout)
 
         # Minimum area threshold
         area_group = QGroupBox("Minimum Region Area")
@@ -433,14 +373,8 @@ class BoundarySearchDialog(QDialog):
         layout.addWidget(self.keep_highlight_check)
 
         # Buttons
-        button_layout = QHBoxLayout()
-        self.search_button = QPushButton("Search")
-        self.search_button.clicked.connect(self.accept)
-        self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.clicked.connect(self.reject)
-        button_layout.addWidget(self.search_button)
-        button_layout.addWidget(self.cancel_button)
-        layout.addLayout(button_layout)
+        self.search_button, self.cancel_button = _add_accept_cancel_row(
+            self, layout, "Search")
 
         self.search_input.setFocus()
 
@@ -458,19 +392,7 @@ class BoundarySearchDialog(QDialog):
 
     def get_selected_dim_color(self):
         """Get the selected DXF color index and RGB value for dimmed entities."""
-        color_map = {
-            "Light Gray": (251, 0xC0C0C0),
-            "Gray": (8, 0x808080),
-            "White": (7, 0xFFFFFF),
-            "Black": (250, 0x000000),
-            "Red": (1, 0xFF0000),
-            "Yellow": (2, 0xFFFF00),
-            "Green": (3, 0x00FF00),
-            "Cyan": (4, 0x00FFFF),
-            "Blue": (5, 0x0000FF),
-            "Magenta": (6, 0xFF00FF)
-        }
-        return color_map.get(self.color_combo.currentText(), (251, 0xC0C0C0))
+        return _selected_dim_color(self.color_combo)
 
 
 class FileInfoDialog(QDialog):
