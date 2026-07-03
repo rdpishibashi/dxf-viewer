@@ -1,12 +1,5 @@
-"""Core business logic for DXF Viewer."""
+"""Core (UI-independent) business logic for DXF Viewer.
 
-from .tab_manager import DXFTab, SearchResult
-from .color_manager import ColorManager
-from .search_manager import SearchManager
-
-__all__ = [
-    'DXFTab',
-    'SearchResult',
-    'ColorManager',
-    'SearchManager',
-]
+Import submodules directly (e.g. ``from core.search_manager import
+SearchManager``) -- this package intentionally re-exports nothing.
+"""
