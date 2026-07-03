@@ -3,7 +3,7 @@
 import sys
 import subprocess
 from PyQt5.QtCore import QThread, pyqtSignal
-from utils.export_utils_v2 import export_dxf_to_image_with_background
+from utils.export_utils import export_dxf_to_image_with_background
 
 
 class EzdxfWorker(QThread):

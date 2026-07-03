@@ -3,7 +3,7 @@
 import re
 from ezdxf import bbox as ezdxf_bbox
 from .tab_manager import SearchResult
-from utils.text_utils import clean_mtext_format_codes
+from utils.text_utils import clean_mtext_format_codes, normalize_width
 
 
 class SearchManager:
@@ -24,7 +24,9 @@ class SearchManager:
         """
         results = []
 
-        # Prepare search pattern
+        # Prepare search pattern. Width-fold (zenkaku<->hankaku) so a query
+        # typed in either width matches a label written in the other.
+        search_text = normalize_width(search_text)
         if not case_sensitive:
             search_text = search_text.lower()
 
@@ -41,7 +43,9 @@ class SearchManager:
                 # Normalize format codes (MTEXT/TEXT) so matching uses visible text
                 entity_text = clean_mtext_format_codes(raw_text)
 
-                compare_text = entity_text if case_sensitive else entity_text.lower()
+                compare_text = normalize_width(entity_text)
+                if not case_sensitive:
+                    compare_text = compare_text.lower()
 
                 # Check for match
                 match = False
@@ -92,7 +96,9 @@ class SearchManager:
 
                     entity_text = clean_mtext_format_codes(raw_text)
 
-                    compare_text = entity_text if case_sensitive else entity_text.lower()
+                    compare_text = normalize_width(entity_text)
+                if not case_sensitive:
+                    compare_text = compare_text.lower()
 
                     match = False
                     if whole_word:

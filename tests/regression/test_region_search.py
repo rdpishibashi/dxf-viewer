@@ -58,6 +58,11 @@ EXPECTED = {
             ('rack1', True, False): 0,      # case-sensitive miss
             ('MPD', False, False): 10,      # 'MPD RACK1' + 'MPD RACK2'
             ('NONEXIST', False, False): 0,
+            # Width-insensitive matching: a zenkaku query must still match
+            # these hankaku-labeled regions (normalize_width folds it before
+            # comparing; see utils/text_utils.py).
+            ('ＲＡＣＫ１', False, False): 18,
+            ('ＭＰＤ', False, False): 10,
         },
     },
     'EE6888-602-01A.dxf': {
@@ -138,6 +143,21 @@ EXPECTED = {
             ('BAKE HEATER UNIT RX', False, False): 1,
             ('MX CHAMBER', False, False): 2,
             ('NONEXIST', False, False): 0,
+        },
+    },
+    # 領域名ラベルが全角文字のみ（例: ＳＹＳＴＥＭ　Ｉ／Ｆ　ＢＯＸ）で書かれた図面。
+    # `_count_letters()` が ASCII 限定だったため英字0字とみなされ、region 検出機能
+    # 導入時点(v1.4.0相当)から一貫して名称候補ゼロだった（DXF-extract-labels
+    # v1.5.24 で全角対応・同じ修正をここにも移植）。
+    'EE6492-039-38A.dxf': {
+        'frames': 4,
+        'min_regions': 4,
+        'queries': {
+            ('ＳＹＳＴＥＭ', False, False): 4,
+            ('NONEXIST', False, False): 0,
+            # Reverse direction: a hankaku query must match these zenkaku-only
+            # labeled regions too (width-insensitive matching).
+            ('SYSTEM', False, False): 4,
         },
     },
 }

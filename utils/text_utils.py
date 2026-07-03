@@ -19,8 +19,27 @@ entities across EE6868/EE6888 with zero regressions versus the old output.
 """
 
 import re
+import unicodedata
 
 from ezdxf.tools.text import plain_mtext
+
+
+def normalize_width(text: str) -> str:
+    """Fold full-width (zenkaku) Latin letters/digits/symbols to their
+    half-width (hankaku) form for width-insensitive matching.
+
+    Hand-drawn circuit DXFs mix half-width and full-width text freely — the
+    same word may appear as ``SYSTEM`` in one drawing and ``ＳＹＳＴＥＭ`` in
+    another. Search should match a query regardless of which width the user
+    typed or the label uses. NFKC normalization does exactly this fold
+    (``Ａ``->``A``, ``１``->``1``, full-width space/slash -> half-width) without
+    touching Japanese kana/kanji, so it's applied only to the strings being
+    *compared*, never to text that gets displayed back to the user (entity
+    text, region names) — callers normalize a local copy for the match check.
+    """
+    if not text:
+        return text
+    return unicodedata.normalize('NFKC', text)
 
 
 def clean_mtext_format_codes(text: str) -> str:

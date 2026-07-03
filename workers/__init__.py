@@ -1,5 +1,5 @@
-"""Worker threads for background tasks."""
+"""Worker threads for background tasks.
 
-from .ezdxf_worker import EzdxfWorker
-
-__all__ = ['EzdxfWorker']
+Import submodules directly (e.g. ``from workers.ezdxf_worker import
+EzdxfWorker``) -- this package intentionally re-exports nothing.
+"""

@@ -1,19 +1,5 @@
-"""UI components for DXF Viewer."""
+"""UI components for DXF Viewer.
 
-from .dialogs import (
-    BackgroundColorDialog,
-    ColorChangeDialog,
-    TextSearchDialog,
-    FileInfoDialog,
-    ExportImageDialog,
-)
-from .viewer_widget import PinchZoomCADViewer
-
-__all__ = [
-    'BackgroundColorDialog',
-    'ColorChangeDialog',
-    'TextSearchDialog',
-    'FileInfoDialog',
-    'ExportImageDialog',
-    'PinchZoomCADViewer',
-]
+Import submodules directly (e.g. ``from ui.main_window import
+DXFViewerApp``) -- this package intentionally re-exports nothing.
+"""
