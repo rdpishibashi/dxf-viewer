@@ -6,18 +6,16 @@ from pathlib import Path
 import ezdxf
 from ezdxf.layouts import Modelspace
 from PyQt5.QtWidgets import (
-    QMainWindow, QTabWidget, QFileDialog, QMessageBox,
-    QStatusBar, QToolBar, QAction, QDialog, QApplication
+    QMainWindow, QTabWidget, QFileDialog, QMessageBox, QDialog, QApplication
 )
 from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtGui import QKeySequence, QFont
 
 from core.tab_manager import DXFTab
 from core.color_manager import ColorManager
 from core.search_manager import SearchManager
 from core.region_search_manager import RegionSearchManager
 from core.layer_consolidator import consolidate_layers as consolidate_doc_layers
-from ui import boundary_overlay
+from ui import boundary_overlay, main_window_actions
 from ui.dialogs import (
     BackgroundColorDialog, ColorChangeDialog, TextSearchDialog,
     HandleSearchDialog, BoundarySearchDialog, FileInfoDialog, ExportImageDialog
@@ -42,10 +40,11 @@ class DXFViewerApp(QMainWindow):
 
         self.setAcceptDrops(True)  # ウィンドウ全体で Drag&Drop 有効化
         
-        # UI要素を初期化
-        self.create_menu_bar()
-        self.create_toolbar()
-        self.create_status_bar()
+        # UI要素を初期化（メニュー/ツールバー/ステータスバーの構築は
+        # ui/main_window_actions.py に分離。アクションは self の属性に載る）
+        main_window_actions.create_menu_bar(self)
+        main_window_actions.create_toolbar(self)
+        main_window_actions.create_status_bar(self)
 
         # メインエリア - タブウィジェット
         self.tab_widget = QTabWidget()
@@ -148,297 +147,6 @@ class DXFViewerApp(QMainWindow):
             self.update_ui_state(file_loaded=False)
             self.setWindowTitle("DXF Viewer")
             self.status_bar.showMessage("Ready")
-    
-    def create_menu_bar(self):
-        """メニューバーを作成"""
-        menubar = self.menuBar()
-        
-        # メニューバーのフォントサイズを大きくする
-        from PyQt5.QtGui import QFont
-        menu_font = QFont()
-        menu_font.setPointSize(14)  # フォントサイズを14ptに設定
-        menubar.setFont(menu_font)
-        
-        # Fileメニュー
-        file_menu = menubar.addMenu('File')
-        
-        # Open DXF File
-        open_action = QAction('Open DXF File...', self)
-        open_action.setShortcut(QKeySequence.Open)
-        open_action.setFont(menu_font)  # メニューアイテムにもフォントを適用
-        open_action.triggered.connect(self.open_file_dialog)
-        file_menu.addAction(open_action)
-        
-        file_menu.addSeparator()
-        
-        # Exit
-        exit_action = QAction('Exit', self)
-        exit_action.setShortcut(QKeySequence.Quit)
-        exit_action.setFont(menu_font)  # メニューアイテムにもフォントを適用
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
-        
-        # Toolsメニュー
-        tools_menu = menubar.addMenu('Tools')
-
-        # File Info
-        self.info_action = QAction('File Information...', self)
-        self.info_action.setFont(menu_font)
-        self.info_action.triggered.connect(self.show_file_info)
-        self.info_action.setEnabled(False)
-        tools_menu.addAction(self.info_action)
-
-        tools_menu.addSeparator()
-
-        # Export to Image
-        self.export_action = QAction('Export to Image...', self)
-        self.export_action.setFont(menu_font)
-        self.export_action.triggered.connect(self.export_to_image)
-        self.export_action.setEnabled(False)
-        tools_menu.addAction(self.export_action)
-
-        tools_menu.addSeparator()
-
-        # Change All Colors
-        self.change_colors_action = QAction('Change All Entity Colors...', self)
-        self.change_colors_action.setFont(menu_font)
-        self.change_colors_action.triggered.connect(self.change_all_colors)
-        self.change_colors_action.setEnabled(False)
-        tools_menu.addAction(self.change_colors_action)
-
-        # Restore Original Colors
-        self.restore_colors_action = QAction('Restore Original Colors', self)
-        self.restore_colors_action.setFont(menu_font)
-        self.restore_colors_action.triggered.connect(self.restore_all_colors)
-        self.restore_colors_action.setEnabled(False)
-        tools_menu.addAction(self.restore_colors_action)
-
-        tools_menu.addSeparator()
-
-        # Change Background Color
-        self.background_color_action = QAction('Change Background Color...', self)
-        self.background_color_action.setFont(menu_font)
-        self.background_color_action.triggered.connect(self.change_background_color)
-        self.background_color_action.setEnabled(False)
-        tools_menu.addAction(self.background_color_action)
-
-        tools_menu.addSeparator()
-
-        # Consolidate Layers (Boundaries / Imported)
-        self.consolidate_layers_action = QAction('Consolidate Layers', self)
-        self.consolidate_layers_action.setFont(menu_font)
-        self.consolidate_layers_action.setToolTip(
-            'Consolidate all layers into Boundaries and Imported')
-        self.consolidate_layers_action.triggered.connect(self.consolidate_layers)
-        self.consolidate_layers_action.setEnabled(False)
-        tools_menu.addAction(self.consolidate_layers_action)
-
-        # Searchメニュー
-        search_menu = menubar.addMenu('Search')
-
-        # Search Text
-        self.search_action = QAction('Search Text...', self)
-        self.search_action.setShortcut(QKeySequence.Find)
-        self.search_action.setFont(menu_font)
-        self.search_action.triggered.connect(self.search_text)
-        self.search_action.setEnabled(False)
-        search_menu.addAction(self.search_action)
-
-        # Clear Search
-        self.clear_search_action = QAction('Clear Search', self)
-        self.clear_search_action.setShortcut(QKeySequence('Ctrl+Shift+F'))
-        self.clear_search_action.setFont(menu_font)
-        self.clear_search_action.triggered.connect(self.clear_search)
-        self.clear_search_action.setEnabled(False)
-        search_menu.addAction(self.clear_search_action)
-
-        search_menu.addSeparator()
-
-        # Find Next
-        self.find_next_action = QAction('Find Next', self)
-        self.find_next_action.setShortcut(QKeySequence.FindNext)
-        self.find_next_action.setIconText('Next')  # shorter label on the toolbar
-        self.find_next_action.setFont(menu_font)
-        self.find_next_action.triggered.connect(self.find_next)
-        self.find_next_action.setEnabled(False)
-        search_menu.addAction(self.find_next_action)
-
-        # Find Previous
-        self.find_prev_action = QAction('Find Previous', self)
-        self.find_prev_action.setShortcut(QKeySequence.FindPrevious)
-        self.find_prev_action.setIconText('Prev')  # shorter label on the toolbar
-        self.find_prev_action.setFont(menu_font)
-        self.find_prev_action.triggered.connect(self.find_previous)
-        self.find_prev_action.setEnabled(False)
-        search_menu.addAction(self.find_prev_action)
-
-        search_menu.addSeparator()
-
-        # Search Handle (one or more entities found directly by DXF handle, e.g. "#212A")
-        self.search_handle_action = QAction('Search Handle...', self)
-        self.search_handle_action.setIconText('Search Handle')
-        self.search_handle_action.setFont(menu_font)
-        self.search_handle_action.setToolTip('Find entities by DXF handle, e.g. #212A')
-        self.search_handle_action.triggered.connect(self.search_handle)
-        self.search_handle_action.setEnabled(False)
-        search_menu.addAction(self.search_handle_action)
-
-        # Clear Search Handle
-        self.clear_handle_search_action = QAction('Clear Search Handle', self)
-        self.clear_handle_search_action.setIconText('Clear')  # shorter label on the toolbar
-        self.clear_handle_search_action.setFont(menu_font)
-        self.clear_handle_search_action.triggered.connect(self.clear_search)
-        self.clear_handle_search_action.setEnabled(False)
-        search_menu.addAction(self.clear_handle_search_action)
-
-        # Find Next Handle
-        self.find_next_handle_action = QAction('Find Next Handle', self)
-        self.find_next_handle_action.setIconText('Next')  # shorter label on the toolbar
-        self.find_next_handle_action.setFont(menu_font)
-        self.find_next_handle_action.triggered.connect(self.find_next_handle)
-        self.find_next_handle_action.setEnabled(False)
-        search_menu.addAction(self.find_next_handle_action)
-
-        # Find Previous Handle
-        self.find_prev_handle_action = QAction('Find Previous Handle', self)
-        self.find_prev_handle_action.setIconText('Prev')  # shorter label on the toolbar
-        self.find_prev_handle_action.setFont(menu_font)
-        self.find_prev_handle_action.triggered.connect(self.find_previous_handle)
-        self.find_prev_handle_action.setEnabled(False)
-        search_menu.addAction(self.find_prev_handle_action)
-
-        search_menu.addSeparator()
-
-        # Search Boundary (rectangular region by name)
-        self.search_boundary_action = QAction('Search Boundary...', self)
-        self.search_boundary_action.setShortcut(QKeySequence('Ctrl+B'))
-        self.search_boundary_action.setIconText('Search Boundary')
-        self.search_boundary_action.setFont(menu_font)
-        self.search_boundary_action.setToolTip('Search rectangular regions by name (Ctrl+B)')
-        self.search_boundary_action.triggered.connect(self.search_boundary)
-        self.search_boundary_action.setEnabled(False)
-        search_menu.addAction(self.search_boundary_action)
-
-        # Clear Boundary Highlight (removes persisted region overlays)
-        self.clear_boundary_highlight_action = QAction('Clear Boundary Highlight', self)
-        self.clear_boundary_highlight_action.setIconText('Clear')  # shorter label on the toolbar
-        self.clear_boundary_highlight_action.setFont(menu_font)
-        self.clear_boundary_highlight_action.setToolTip('Remove persisted region boundary highlights')
-        self.clear_boundary_highlight_action.triggered.connect(self.clear_boundary_highlight)
-        self.clear_boundary_highlight_action.setEnabled(False)
-        search_menu.addAction(self.clear_boundary_highlight_action)
-
-    def create_toolbar(self):
-        """ツールバーを作成"""
-        toolbar = QToolBar()
-        
-        # ツールバーのフォントサイズを大きくする
-        from PyQt5.QtGui import QFont
-        toolbar_font = QFont()
-        toolbar_font.setPointSize(14)  # フォントサイズを14ptに設定
-        toolbar.setFont(toolbar_font)
-        
-        self.addToolBar(toolbar)
-
-        # Open File
-        open_action = QAction('Open', self)
-        open_action.setFont(toolbar_font)  # ツールバーアイテムにもフォントを適用
-        open_action.triggered.connect(self.open_file_dialog)
-        toolbar.addAction(open_action)
-
-        toolbar.addSeparator()
-
-        # Search Text group
-        self.toolbar_search_action = QAction('Search Text', self)
-        self.toolbar_search_action.setFont(toolbar_font)
-        self.toolbar_search_action.triggered.connect(self.search_text)
-        self.toolbar_search_action.setEnabled(False)
-        toolbar.addAction(self.toolbar_search_action)
-
-        # Clear Search
-        self.toolbar_clear_search_action = QAction('Clear', self)
-        self.toolbar_clear_search_action.setFont(toolbar_font)
-        self.toolbar_clear_search_action.triggered.connect(self.clear_search)
-        self.toolbar_clear_search_action.setEnabled(False)
-        toolbar.addAction(self.toolbar_clear_search_action)
-
-        # Search navigation — reuse the menu actions (shared enabled state,
-        # iconText shortens the label shown on the toolbar button)
-        for action in (self.find_next_action, self.find_prev_action):
-            action.setFont(toolbar_font)
-            toolbar.addAction(action)
-
-        toolbar.addSeparator()
-
-        # Search Handle group — reuse the menu actions (shared enabled state)
-        for action in (self.search_handle_action, self.clear_handle_search_action,
-                       self.find_next_handle_action, self.find_prev_handle_action):
-            action.setFont(toolbar_font)
-            toolbar.addAction(action)
-
-        toolbar.addSeparator()
-
-        # Search Boundary group — reuse the menu actions (shared enabled state)
-        for action in (self.search_boundary_action, self.clear_boundary_highlight_action):
-            action.setFont(toolbar_font)
-            toolbar.addAction(action)
-
-        # --- Second toolbar row: Change Colors onward, then Export/Info ---
-        self.addToolBarBreak()
-        toolbar2 = QToolBar()
-        toolbar2.setFont(toolbar_font)
-        self.addToolBar(toolbar2)
-
-        # Change Colors
-        self.toolbar_change_colors_action = QAction('Change Colors', self)
-        self.toolbar_change_colors_action.setFont(toolbar_font)
-        self.toolbar_change_colors_action.triggered.connect(self.change_all_colors)
-        self.toolbar_change_colors_action.setEnabled(False)
-        toolbar2.addAction(self.toolbar_change_colors_action)
-
-        # Restore Colors
-        self.toolbar_restore_colors_action = QAction('Restore Colors', self)
-        self.toolbar_restore_colors_action.setFont(toolbar_font)
-        self.toolbar_restore_colors_action.triggered.connect(self.restore_all_colors)
-        self.toolbar_restore_colors_action.setEnabled(False)
-        toolbar2.addAction(self.toolbar_restore_colors_action)
-
-        toolbar2.addSeparator()
-
-        # Background Color
-        self.toolbar_background_color_action = QAction('Background Color', self)
-        self.toolbar_background_color_action.setFont(toolbar_font)
-        self.toolbar_background_color_action.triggered.connect(self.change_background_color)
-        self.toolbar_background_color_action.setEnabled(False)
-        toolbar2.addAction(self.toolbar_background_color_action)
-
-        toolbar2.addSeparator()
-
-        # Consolidate Layers — reuse the menu action (shared enabled state)
-        self.consolidate_layers_action.setFont(toolbar_font)
-        toolbar2.addAction(self.consolidate_layers_action)
-
-        toolbar2.addSeparator()
-
-        # Export
-        self.toolbar_export_action = QAction('Export', self)
-        self.toolbar_export_action.setFont(toolbar_font)
-        self.toolbar_export_action.triggered.connect(self.export_to_image)
-        self.toolbar_export_action.setEnabled(False)
-        toolbar2.addAction(self.toolbar_export_action)
-
-        # File Info
-        self.toolbar_info_action = QAction('Info', self)
-        self.toolbar_info_action.setFont(toolbar_font)
-        self.toolbar_info_action.triggered.connect(self.show_file_info)
-        self.toolbar_info_action.setEnabled(False)
-        toolbar2.addAction(self.toolbar_info_action)
-    
-    def create_status_bar(self):
-        """ステータスバーを作成"""
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Ready")
     
     def open_file_dialog(self):
         """ファイル選択ダイアログを開く"""
