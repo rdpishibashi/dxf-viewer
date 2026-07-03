@@ -62,6 +62,44 @@ class DXFViewerApp(QMainWindow):
         if current_index >= 0:
             return self.tab_widget.widget(current_index)
         return None
+
+    def _current_tab_data(self, require_doc=False):
+        """アクティブタブの DXFTab データを返す（無ければ None）。
+
+        require_doc=True なら DXF ドキュメント読込済みであることも要求し、
+        未読込時は共通の "No File" 警告を出して None を返す。
+        """
+        current_tab = self.get_current_tab()
+        if not current_tab or not hasattr(current_tab, 'tab_data'):
+            return None
+        tab_data = current_tab.tab_data
+        if require_doc and not tab_data.dxf_doc:
+            QMessageBox.warning(self, "No File", "No DXF file is currently loaded.")
+            return None
+        return tab_data
+
+    def _update_search_actions(self, tab_data):
+        """検索系アクションの enabled 状態を tab_data の状態から一括更新する。
+
+        タブ切り替え時と、各検索モードの開始・クリア後の両方から呼ぶ
+        （かつては各所が個別に setEnabled を並べており、更新漏れの温床だった）。
+        """
+        has_results = len(tab_data.search_results) > 0 and tab_data.search_active
+        has_handle_results = (
+            len(tab_data.handle_search_results) > 0 and tab_data.handle_search_active)
+        can_clear = has_results or has_handle_results or tab_data.boundary_search_active
+        self.clear_search_action.setEnabled(can_clear)
+        self.toolbar_clear_search_action.setEnabled(can_clear)
+        self.find_next_action.setEnabled(len(tab_data.search_results) > 1)
+        self.find_prev_action.setEnabled(len(tab_data.search_results) > 1)
+
+        self.clear_handle_search_action.setEnabled(has_handle_results)
+        self.find_next_handle_action.setEnabled(len(tab_data.handle_search_results) > 1)
+        self.find_prev_handle_action.setEnabled(len(tab_data.handle_search_results) > 1)
+
+        # Boundary highlight clear is available whenever overlays exist
+        self.clear_boundary_highlight_action.setEnabled(
+            len(tab_data.boundary_overlay_items) > 0)
     
     def create_new_tab(self, file_path=None):
         """新しいタブを作成"""
@@ -99,27 +137,9 @@ class DXFViewerApp(QMainWindow):
         self.update_ui_for_active_tab()
         
         # Update search-related UI based on current tab
-        current_tab = self.get_current_tab()
-        if current_tab and hasattr(current_tab, 'tab_data'):
-            tab_data = current_tab.tab_data
-            has_results = len(tab_data.search_results) > 0 and tab_data.search_active
-            has_handle_results = (
-                len(tab_data.handle_search_results) > 0 and tab_data.handle_search_active)
-            self.clear_search_action.setEnabled(
-                has_results or has_handle_results or tab_data.boundary_search_active)
-            self.toolbar_clear_search_action.setEnabled(
-                has_results or has_handle_results or tab_data.boundary_search_active)
-            self.find_next_action.setEnabled(len(tab_data.search_results) > 1)
-            self.find_prev_action.setEnabled(len(tab_data.search_results) > 1)
-
-            self.clear_handle_search_action.setEnabled(has_handle_results)
-            self.find_next_handle_action.setEnabled(len(tab_data.handle_search_results) > 1)
-            self.find_prev_handle_action.setEnabled(len(tab_data.handle_search_results) > 1)
-
-            # Boundary highlight clear is available whenever overlays exist
-            self.clear_boundary_highlight_action.setEnabled(
-                len(tab_data.boundary_overlay_items) > 0)
-            
+        tab_data = self._current_tab_data()
+        if tab_data:
+            self._update_search_actions(tab_data)
             # Update color change UI
             self.restore_colors_action.setEnabled(tab_data.color_change_active)
             self.toolbar_restore_colors_action.setEnabled(tab_data.color_change_active)
@@ -158,23 +178,21 @@ class DXFViewerApp(QMainWindow):
     
     def show_file_info(self):
         """ファイル情報ダイアログを表示"""
-        current_tab = self.get_current_tab()
-        if not current_tab or not hasattr(current_tab, 'tab_data') or not current_tab.tab_data.file_path:
+        tab_data = self._current_tab_data()
+        if not tab_data or not tab_data.file_path:
             QMessageBox.warning(self, "No File", "No DXF file is currently loaded.")
             return
-        
+
         dialog = FileInfoDialog(self)
-        dialog.show_file_info(current_tab.tab_data.file_path)
+        dialog.show_file_info(tab_data.file_path)
         dialog.exec_()
     
     def export_to_image(self):
         """画像エクスポートダイアログを表示"""
-        current_tab = self.get_current_tab()
-        if not current_tab or not hasattr(current_tab, 'tab_data') or not current_tab.tab_data.file_path:
+        tab_data = self._current_tab_data()
+        if not tab_data or not tab_data.file_path:
             QMessageBox.warning(self, "No File", "No DXF file is currently loaded.")
             return
-
-        tab_data = current_tab.tab_data
 
         # 出力ファイル選択
         output_path, _ = QFileDialog.getSaveFileName(
@@ -285,11 +303,9 @@ class DXFViewerApp(QMainWindow):
     
     def change_background_color(self):
         """Change the background color of the viewer"""
-        current_tab = self.get_current_tab()
-        if not current_tab or not hasattr(current_tab, 'tab_data'):
+        tab_data = self._current_tab_data()
+        if not tab_data:
             return
-
-        tab_data = current_tab.tab_data
 
         # Show background color dialog
         dialog = BackgroundColorDialog(self)
@@ -307,13 +323,8 @@ class DXFViewerApp(QMainWindow):
 
     def change_all_colors(self):
         """Change all entity colors to a specified color"""
-        current_tab = self.get_current_tab()
-        if not current_tab or not hasattr(current_tab, 'tab_data'):
-            return
-        
-        tab_data = current_tab.tab_data
-        if not tab_data.dxf_doc:
-            QMessageBox.warning(self, "No File", "No DXF file is currently loaded.")
+        tab_data = self._current_tab_data(require_doc=True)
+        if not tab_data:
             return
         
         # Clear any active search first
@@ -330,10 +341,12 @@ class DXFViewerApp(QMainWindow):
 
             # Store original colors if not already stored
             if not tab_data.color_change_active:
-                self.store_colors_for_change(tab_data)
+                ColorManager.store_entity_colors(tab_data)
 
             # Apply color to all entities
-            self.apply_color_to_all_entities(tab_data, color_index, rgb_value, preserve_text)
+            ColorManager.apply_color_to_all_entities(
+                tab_data, color_index, rgb_value, preserve_text)
+            self.refresh_viewer(tab_data)
 
             # Update UI
             tab_data.color_change_active = True
@@ -348,14 +361,12 @@ class DXFViewerApp(QMainWindow):
     
     def restore_all_colors(self):
         """Restore original colors after color change"""
-        current_tab = self.get_current_tab()
-        if not current_tab or not hasattr(current_tab, 'tab_data'):
+        tab_data = self._current_tab_data()
+        if not tab_data:
             return
-        
-        tab_data = current_tab.tab_data
         if tab_data.color_change_active and tab_data.color_change_backup:
             # Restore colors from backup
-            self.restore_colors_from_backup(tab_data)
+            ColorManager.restore_colors_from_backup(tab_data)
             
             # Clear backup
             tab_data.color_change_backup.clear()
@@ -369,28 +380,10 @@ class DXFViewerApp(QMainWindow):
             self.toolbar_restore_colors_action.setEnabled(False)
             self.status_bar.showMessage("Original colors restored")
     
-    def store_colors_for_change(self, tab_data):
-        """Store original colors before changing all entity colors"""
-        ColorManager.store_entity_colors(tab_data)
-    
-    def apply_color_to_all_entities(self, tab_data, color_index, rgb_value, preserve_text=False):
-        """Apply specified color to all entities"""
-        ColorManager.apply_color_to_all_entities(tab_data, color_index, rgb_value, preserve_text)
-        self.refresh_viewer(tab_data)
-    
-    def restore_colors_from_backup(self, tab_data):
-        """Restore colors from the color change backup"""
-        ColorManager.restore_colors_from_backup(tab_data)
-    
     def search_text(self):
         """Open search dialog and perform text search"""
-        current_tab = self.get_current_tab()
-        if not current_tab or not hasattr(current_tab, 'tab_data'):
-            return
-        
-        tab_data = current_tab.tab_data
-        if not tab_data.dxf_doc:
-            QMessageBox.warning(self, "No File", "No DXF file is currently loaded.")
+        tab_data = self._current_tab_data(require_doc=True)
+        if not tab_data:
             return
         
         # Show search dialog
@@ -426,10 +419,7 @@ class DXFViewerApp(QMainWindow):
                 
                 # Enable navigation actions
                 tab_data.search_active = True
-                self.clear_search_action.setEnabled(True)
-                self.toolbar_clear_search_action.setEnabled(True)
-                self.find_next_action.setEnabled(len(tab_data.search_results) > 1)
-                self.find_prev_action.setEnabled(len(tab_data.search_results) > 1)
+                self._update_search_actions(tab_data)
                 
                 # Navigate to first result
                 tab_data.current_search_index = 0
@@ -455,79 +445,68 @@ class DXFViewerApp(QMainWindow):
         practice (each clears the others before starting), but this handles
         all of them so every "Clear" button/shortcut acts as a global clear.
         """
-        current_tab = self.get_current_tab()
-        if current_tab and hasattr(current_tab, 'tab_data'):
-            tab_data = current_tab.tab_data
+        tab_data = self._current_tab_data()
+        if not tab_data:
+            return
 
-            cleared = False
+        cleared = False
 
-            if tab_data.search_active or tab_data.handle_search_active:
-                # Restore original colors (shared backup for both modes)
-                SearchManager.restore_original_colors(tab_data)
+        if tab_data.search_active or tab_data.handle_search_active:
+            # Restore original colors (shared backup for both modes)
+            SearchManager.restore_original_colors(tab_data)
 
-                if tab_data.search_active:
-                    tab_data.search_results.clear()
-                    tab_data.current_search_index = -1
-                    tab_data.search_active = False
-                    self.find_next_action.setEnabled(False)
-                    self.find_prev_action.setEnabled(False)
-                    cleared = True
-
-                if tab_data.handle_search_active:
-                    tab_data.handle_search_results.clear()
-                    tab_data.current_handle_search_index = -1
-                    tab_data.handle_search_active = False
-                    self.find_next_handle_action.setEnabled(False)
-                    self.find_prev_handle_action.setEnabled(False)
-                    cleared = True
-
-                # Refresh the viewer
-                self.refresh_viewer(tab_data)
-
-            if tab_data.boundary_search_active:
-                self._clear_boundary_search(tab_data)
+            if tab_data.search_active:
+                tab_data.search_results.clear()
+                tab_data.current_search_index = -1
+                tab_data.search_active = False
                 cleared = True
 
-            if cleared:
-                self.clear_search_action.setEnabled(False)
-                self.toolbar_clear_search_action.setEnabled(False)
-                self.clear_handle_search_action.setEnabled(False)
-                self.status_bar.showMessage("Search cleared")
+            if tab_data.handle_search_active:
+                tab_data.handle_search_results.clear()
+                tab_data.current_handle_search_index = -1
+                tab_data.handle_search_active = False
+                cleared = True
+
+            # Refresh the viewer
+            self.refresh_viewer(tab_data)
+
+        if tab_data.boundary_search_active:
+            self._clear_boundary_search(tab_data)
+            cleared = True
+
+        if cleared:
+            self._update_search_actions(tab_data)
+            self.status_bar.showMessage("Search cleared")
+
+    def _step_search_result(self, results_attr, index_attr, step):
+        """検索結果リストを巡回ナビゲートする（テキスト検索とHandle検索で共用）。
+
+        results_attr/index_attr は tab_data 上の結果リスト・現在位置の属性名。
+        """
+        tab_data = self._current_tab_data()
+        if not tab_data:
+            return
+        results = getattr(tab_data, results_attr)
+        if results:
+            index = (getattr(tab_data, index_attr) + step) % len(results)
+            setattr(tab_data, index_attr, index)
+            self.navigate_to_result(tab_data, results, index)
 
     def find_next(self):
         """Navigate to next search result"""
-        current_tab = self.get_current_tab()
-        if not current_tab or not hasattr(current_tab, 'tab_data'):
-            return
-
-        tab_data = current_tab.tab_data
-        if tab_data.search_results:
-            tab_data.current_search_index = (tab_data.current_search_index + 1) % len(tab_data.search_results)
-            self.navigate_to_result(tab_data, tab_data.search_results, tab_data.current_search_index)
+        self._step_search_result('search_results', 'current_search_index', +1)
 
     def find_previous(self):
         """Navigate to previous search result"""
-        current_tab = self.get_current_tab()
-        if not current_tab or not hasattr(current_tab, 'tab_data'):
-            return
-
-        tab_data = current_tab.tab_data
-        if tab_data.search_results:
-            tab_data.current_search_index = (tab_data.current_search_index - 1) % len(tab_data.search_results)
-            self.navigate_to_result(tab_data, tab_data.search_results, tab_data.current_search_index)
+        self._step_search_result('search_results', 'current_search_index', -1)
 
     # ------------------------------------------------------------------
     # Handle search (find one or more entities directly by DXF handle)
     # ------------------------------------------------------------------
     def search_handle(self):
         """Open the handle search dialog and highlight the resolved entities."""
-        current_tab = self.get_current_tab()
-        if not current_tab or not hasattr(current_tab, 'tab_data'):
-            return
-
-        tab_data = current_tab.tab_data
-        if not tab_data.dxf_doc:
-            QMessageBox.warning(self, "No File", "No DXF file is currently loaded.")
+        tab_data = self._current_tab_data(require_doc=True)
+        if not tab_data:
             return
 
         dialog = HandleSearchDialog(self)
@@ -560,11 +539,7 @@ class DXFViewerApp(QMainWindow):
         self.refresh_viewer(tab_data)
 
         tab_data.handle_search_active = True
-        self.clear_search_action.setEnabled(True)
-        self.toolbar_clear_search_action.setEnabled(True)
-        self.clear_handle_search_action.setEnabled(True)
-        self.find_next_handle_action.setEnabled(len(results) > 1)
-        self.find_prev_handle_action.setEnabled(len(results) > 1)
+        self._update_search_actions(tab_data)
 
         tab_data.current_handle_search_index = 0
         self.navigate_to_result(tab_data, tab_data.handle_search_results, 0)
@@ -576,42 +551,19 @@ class DXFViewerApp(QMainWindow):
 
     def find_next_handle(self):
         """Navigate to next handle-search result"""
-        current_tab = self.get_current_tab()
-        if not current_tab or not hasattr(current_tab, 'tab_data'):
-            return
-
-        tab_data = current_tab.tab_data
-        if tab_data.handle_search_results:
-            tab_data.current_handle_search_index = (
-                tab_data.current_handle_search_index + 1) % len(tab_data.handle_search_results)
-            self.navigate_to_result(
-                tab_data, tab_data.handle_search_results, tab_data.current_handle_search_index)
+        self._step_search_result('handle_search_results', 'current_handle_search_index', +1)
 
     def find_previous_handle(self):
         """Navigate to previous handle-search result"""
-        current_tab = self.get_current_tab()
-        if not current_tab or not hasattr(current_tab, 'tab_data'):
-            return
-
-        tab_data = current_tab.tab_data
-        if tab_data.handle_search_results:
-            tab_data.current_handle_search_index = (
-                tab_data.current_handle_search_index - 1) % len(tab_data.handle_search_results)
-            self.navigate_to_result(
-                tab_data, tab_data.handle_search_results, tab_data.current_handle_search_index)
+        self._step_search_result('handle_search_results', 'current_handle_search_index', -1)
 
     # ------------------------------------------------------------------
     # Boundary (rectangular region) search
     # ------------------------------------------------------------------
     def search_boundary(self):
         """Open the boundary search dialog and highlight matching regions."""
-        current_tab = self.get_current_tab()
-        if not current_tab or not hasattr(current_tab, 'tab_data'):
-            return
-
-        tab_data = current_tab.tab_data
-        if not tab_data.dxf_doc:
-            QMessageBox.warning(self, "No File", "No DXF file is currently loaded.")
+        tab_data = self._current_tab_data(require_doc=True)
+        if not tab_data:
             return
 
         dialog = BoundarySearchDialog(self)
@@ -696,9 +648,7 @@ class DXFViewerApp(QMainWindow):
         boundary_overlay.zoom_to_regions(tab_data, matched)
 
         tab_data.boundary_search_active = True
-        self.clear_search_action.setEnabled(True)
-        self.toolbar_clear_search_action.setEnabled(True)
-        self.clear_boundary_highlight_action.setEnabled(True)
+        self._update_search_actions(tab_data)
 
     def _clear_boundary_search(self, tab_data):
         """Restore dimmed colors; keep or drop the overlay per the saved flag."""
@@ -714,18 +664,14 @@ class DXFViewerApp(QMainWindow):
 
         if keep and matched:
             boundary_overlay.draw_boundary_overlays(tab_data, matched)
-            self.clear_boundary_highlight_action.setEnabled(True)
         else:
             tab_data.matched_regions = []
-            self.clear_boundary_highlight_action.setEnabled(False)
 
     def clear_boundary_highlight(self):
         """Remove the boundary overlay; also un-dim if a boundary search is active."""
-        current_tab = self.get_current_tab()
-        if not current_tab or not hasattr(current_tab, 'tab_data'):
+        tab_data = self._current_tab_data()
+        if not tab_data:
             return
-
-        tab_data = current_tab.tab_data
         if not tab_data.boundary_overlay_items and not tab_data.boundary_search_active:
             return
 
@@ -736,16 +682,13 @@ class DXFViewerApp(QMainWindow):
             tab_data.boundary_search_active = False
             self.refresh_viewer(tab_data)
             tab_data.boundary_overlay_items = []  # destroyed by the refresh
-            if not tab_data.search_active:
-                self.clear_search_action.setEnabled(False)
-                self.toolbar_clear_search_action.setEnabled(False)
         else:
             # Only a persisted (post-Clear-Search) overlay remains.
             boundary_overlay.remove_boundary_overlays(tab_data)
 
         tab_data.matched_regions = []
         tab_data.boundary_keep_highlight = False
-        self.clear_boundary_highlight_action.setEnabled(False)
+        self._update_search_actions(tab_data)
         self.status_bar.showMessage("Boundary highlight cleared")
 
     # ------------------------------------------------------------------
@@ -758,13 +701,8 @@ class DXFViewerApp(QMainWindow):
         regions; everything else goes to 'Imported'. The change is in-memory
         only — reopening the file restores the original layers.
         """
-        current_tab = self.get_current_tab()
-        if not current_tab or not hasattr(current_tab, 'tab_data'):
-            return
-
-        tab_data = current_tab.tab_data
-        if not tab_data.dxf_doc:
-            QMessageBox.warning(self, "No File", "No DXF file is currently loaded.")
+        tab_data = self._current_tab_data(require_doc=True)
+        if not tab_data:
             return
 
         # Clear active search/highlight first — we are about to rewrite layers.
