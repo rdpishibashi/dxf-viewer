@@ -140,6 +140,18 @@ EXPECTED = {
             ('NONEXIST', False, False): 0,
         },
     },
+    # 領域名ラベルが全角文字のみ（例: ＳＹＳＴＥＭ　Ｉ／Ｆ　ＢＯＸ）で書かれた図面。
+    # `_count_letters()` が ASCII 限定だったため英字0字とみなされ、region 検出機能
+    # 導入時点(v1.4.0相当)から一貫して名称候補ゼロだった（DXF-extract-labels
+    # v1.5.24 で全角対応・同じ修正をここにも移植）。
+    'EE6492-039-38A.dxf': {
+        'frames': 4,
+        'min_regions': 4,
+        'queries': {
+            ('ＳＹＳＴＥＭ', False, False): 4,
+            ('NONEXIST', False, False): 0,
+        },
+    },
 }
 
 
