@@ -8,24 +8,28 @@ A PyQt5-based DXF file viewer with advanced features including search, color man
 DXF-viewer/
 ├── dxf_viewer.py          # Main entry point
 ├── requirements.txt       # Python dependencies
-├── README.md             # This file
-├── ui/                   # User interface components
-│   ├── __init__.py
-│   ├── main_window.py    # Main application window (DXFViewerApp)
-│   ├── dialogs.py        # All dialog windows
-│   └── viewer_widget.py  # Enhanced CAD viewer widget
-├── core/                 # Business logic
-│   ├── __init__.py
-│   ├── tab_manager.py    # Tab state management
-│   ├── color_manager.py  # Entity color operations
-│   └── search_manager.py # Text search functionality
-├── workers/              # Background tasks
-│   ├── __init__.py
-│   └── ezdxf_worker.py   # Ezdxf command worker thread
-└── utils/                # Utility functions
-    ├── __init__.py
-    ├── file_utils.py     # File validation and helpers
-    └── app_utils.py      # Application setup and signals
+├── README.md              # This file
+├── ui/                    # User interface components
+│   ├── main_window.py            # Main application window (DXFViewerApp)
+│   ├── main_window_actions.py    # Menu / toolbar / status bar builders
+│   ├── boundary_overlay.py       # Boundary-highlight scene drawing
+│   ├── dialogs.py                # All dialog windows
+│   └── viewer_widget.py          # Enhanced CAD viewer widget
+├── core/                  # Business logic (UI-independent)
+│   ├── tab_manager.py            # Tab state management
+│   ├── color_manager.py          # Entity color operations
+│   ├── search_manager.py         # Text / handle search functionality
+│   ├── region_detector.py        # Rectangular region detection (ported from DXF-extract-labels)
+│   ├── region_search_manager.py  # Region search (analysis cache + name matching)
+│   └── layer_consolidator.py     # Layer consolidation (Boundaries / Imported)
+├── workers/               # Background tasks
+│   └── ezdxf_worker.py           # Ezdxf command worker thread
+├── utils/                 # Utility functions
+│   ├── file_utils.py             # File validation and helpers
+│   ├── app_utils.py              # Application setup and signals
+│   ├── text_utils.py             # MTEXT cleaning + zenkaku/hankaku folding
+│   └── export_utils.py           # DXF-to-image export (PIL compositing)
+└── tests/regression/      # Regression tests (run directly with python)
 
 ## Installation
 
