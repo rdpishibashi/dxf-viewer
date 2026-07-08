@@ -192,6 +192,37 @@ DXF-viewer 独自のツールバー／メニューで代替できる。
 - `QTabWidget` + `DXFTab` データクラスで管理
 - タブ切り替え時に `DXFTab.viewer_widget` の参照を差し替える
 
+**最後のタブを閉じてもアプリは終了しない（2026-07-09 修正）**:
+
+`DXFViewerApp.close_tab(index)` は以前、`tab_widget.count() <= 1`（最後の1枚）の場合に
+`self.close()` を呼んでいた。Qt の既定 `quitOnLastWindowClosed` によりメインウィンドウが
+閉じるとアプリ全体が終了してしまい、「全タブを閉じたら起動時と同じブランク状態に
+戻ってほしい」という期待と食い違っていた。
+
+修正後は特別扱いをやめ、常に通常の `removeTab()` + `deleteLater()` のみを行う。
+`QTabWidget` はタブが 0 枚になると `currentChanged(-1)` を自動発火し、既存の
+`on_tab_changed` → `update_ui_for_active_tab()` の「現在タブなし」分岐
+（`get_current_tab()` が `None` を返すケース）が、ウィンドウタイトルを `"DXF Viewer"`、
+ステータスバーを `"Ready"` に戻し、ファイル依存アクションを無効化する——これは
+`DXFViewerApp.__init__()` の起動直後と全く同じ状態（`create_status_bar()` の初期メッセージも
+`"Ready"`）であるため、追加のリセット処理は不要だった。
+
+`close_tab()` の呼び出し元は2箇所あり、どちらもこの修正で挙動が揃う:
+1. `tab_widget.tabCloseRequested`（タブの × クリック）
+2. `load_dxf()` のエラー復旧パス（`ezdxf.readfile()` 失敗時、作成直後のタブを削除）
+   — 副次的に、他にタブが無い状態で不正なDXFファイルを開こうとした場合もアプリが
+   終了しなくなった。
+
+明示的な終了操作（File > Exit、`QKeySequence.Quit`）は `window.close` を直接呼ぶ別の
+アクションで、この修正の影響を受けない。
+
+回帰テスト: `tests/regression/test_close_all_tabs.py`（複数タブから最後の1枚を閉じる／
+単独タブを閉じる／`load_dxf()` エラー復旧パスの3ケース。`QApplication` インスタンスを
+モジュールレベル変数に保持する必要がある点に注意——`QApplication.instance() or
+QApplication([])` を式文のまま（変数に代入せず）実行すると参照がすぐガベージコレクトされ、
+直後の `QWidget` 生成が `"QWidget: Must construct a QApplication before a QWidget"` で
+fatal crash する PyQt5 の既知の落とし穴）。
+
 ### 検索（`core/search_manager.py`）
 
 - `SearchManager.find_text_entities()` で TEXT/MTEXT エンティティを走査（modelspace + ブロック定義）
@@ -728,7 +759,18 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-07-03（`core/region_detector.py`: L字型領域の名称検出を改善（DXF-extract-labels v1.5.27 から移植）。`EE6491-039-04A.dxf` の `SYSTEM I/F BOX`（FLAT CABLE 部と一体のL字型領域）が Search Boundary でヒットしない問題を修正。①`_notch_bottom_edges()` を追加し、切り欠き部の下向き横エッジ（最下端レベル以外）を `region_name_candidates()` の Tier2 スキャン対象に追加（長方形では挙動不変）。②viewer 未移植だった `_remove_overlap_claimed_candidates()`（DXF-extract-labels v1.5.14 相当、Tier 再計算は省略）を移植し `analyze_dxf_regions()` の最終段で呼ぶ。default_name のみ照合する Search Boundary では、これが無いとネスト領域 `HEATER CTRL B.D` の名称がL字側 default に残り `SYSTEM I/F BOX` が検索不能だった。`tests/regression/test_region_search.py` に `EE6491-039-04A.dxf` の期待値を追加、既存図面の検出件数・検索結果は不変（回帰テスト4スクリプト PASS）。詳細は「Search Boundary」節の「L字型領域の名称検出」参照。）*
+*最終更新: 2026-07-09（`ui/main_window.py`: 最後のタブを閉じるとアプリが終了してしまう
+不具合を修正。`DXFViewerApp.close_tab()` の「最後の1枚なら `self.close()`」特別扱いを削除し、
+常に通常のタブ削除のみを行うようにした。`QTabWidget` がタブ0枚になると自動発火する
+`currentChanged(-1)` を既存の `on_tab_changed`/`update_ui_for_active_tab()` がそのまま
+処理し、起動直後と同じブランク状態（タイトル `"DXF Viewer"`・ステータス `"Ready"`・
+ファイル依存アクション無効）に戻す。`close_tab()` のもう1つの呼び出し元
+（`load_dxf()` のエラー復旧パス）も同じ修正の恩恵を受け、他にタブが無い状態で不正な
+DXFファイルを開こうとしてもアプリが終了しなくなった。File > Exit（`QKeySequence.Quit`）は
+別経路のため影響なし。回帰テスト `tests/regression/test_close_all_tabs.py` を新設
+（3ケース）。詳細は「マルチタブ」節参照。）*
+
+*過去の更新: 2026-07-03（`core/region_detector.py`: L字型領域の名称検出を改善（DXF-extract-labels v1.5.27 から移植）。`EE6491-039-04A.dxf` の `SYSTEM I/F BOX`（FLAT CABLE 部と一体のL字型領域）が Search Boundary でヒットしない問題を修正。①`_notch_bottom_edges()` を追加し、切り欠き部の下向き横エッジ（最下端レベル以外）を `region_name_candidates()` の Tier2 スキャン対象に追加（長方形では挙動不変）。②viewer 未移植だった `_remove_overlap_claimed_candidates()`（DXF-extract-labels v1.5.14 相当、Tier 再計算は省略）を移植し `analyze_dxf_regions()` の最終段で呼ぶ。default_name のみ照合する Search Boundary では、これが無いとネスト領域 `HEATER CTRL B.D` の名称がL字側 default に残り `SYSTEM I/F BOX` が検索不能だった。`tests/regression/test_region_search.py` に `EE6491-039-04A.dxf` の期待値を追加、既存図面の検出件数・検索結果は不変（回帰テスト4スクリプト PASS）。詳細は「Search Boundary」節の「L字型領域の名称検出」参照。）*
 
 *（同日: `ui/viewer_widget.py`: 複数図面 DXF でカーソルを動かすだけで画面がパンする不具合を修正。`_OutlineHighlightGraphicsView` に `mouseMoveEvent` オーバーライドを追加し、左ボタン未押下時は `super().mouseMoveEvent()` 呼び出し前後のスクロール位置を保存・復元することで、ホバー検出は維持しつつカーソル移動による意図しないパンを防ぐ。加えて `PinchZoomCADViewer.__init__` で `setResizeAnchor(AnchorViewCenter)` を設定し、ビューポートサイズ変化時のパン（`AnchorUnderMouse` のデフォルト動作）を無効化（多図面の大スクロール範囲では 1px のビューポート変化でも大幅なパンになっていた）。`TransformationAnchor` は `AnchorUnderMouse` のまま維持（ホイールズームはカーソル位置を中心に行う）。回帰テスト PASS。）*
 

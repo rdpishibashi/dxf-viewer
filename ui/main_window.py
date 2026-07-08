@@ -121,12 +121,11 @@ class DXFViewerApp(QMainWindow):
         return tab
     
     def close_tab(self, index):
-        """タブを閉じる"""
-        if self.tab_widget.count() <= 1:
-            # 最後のタブの場合はアプリケーションを終了
-            self.close()
-            return
-        
+        """タブを閉じる（最後の1枚を閉じてもアプリは終了せず、起動時と同じ
+        ブランク状態に戻す。QTabWidget が空になると currentChanged(-1) が
+        自動発火し、on_tab_changed → update_ui_for_active_tab() の
+        "タブなし" 分岐がタイトル/ステータスバー/アクション有効状態を
+        起動直後と同じ状態にリセットする）"""
         widget = self.tab_widget.widget(index)
         self.tab_widget.removeTab(index)
         if widget:
