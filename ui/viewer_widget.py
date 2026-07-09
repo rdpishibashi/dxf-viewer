@@ -6,9 +6,13 @@ from ezdxf.addons.drawing.qtviewer import (
 from ezdxf.addons.drawing.config import Configuration
 from ezdxf.addons.drawing.pyqt import PyQtBackend
 from ezdxf.npshapes import to_qpainter_path
-from PyQt5.QtCore import Qt, QEvent
+from PyQt5.QtCore import Qt, QEvent, QTimer
 from PyQt5.QtWidgets import QGraphicsView, QGraphicsPathItem
 from PyQt5.QtGui import QBrush, QColor, QPainterPathStroker
+
+# 右側パネル（レイヤー表示・要素属性表示。ezdxf CADViewer の self.sidebar）の
+# 初期横幅を、ezdxf 側デフォルト（コンテナ幅の 1/4）の何%に縮小するか。
+SIDEBAR_WIDTH_SCALE = 0.65
 
 
 class _ClickThroughPathItem(QGraphicsPathItem):
@@ -125,6 +129,48 @@ class PinchZoomCADViewer(CADViewer):
             # does not shift the scene under the cursor.  TransformationAnchor
             # stays AnchorUnderMouse so wheel-zoom still uses the cursor point.
             self.graphics_view.setResizeAnchor(QGraphicsView.AnchorViewCenter)
+
+        # Shrink the sidebar (layer list + element attribute panel) to
+        # SIDEBAR_WIDTH_SCALE of ezdxf's default width, and keep it a fixed
+        # pixel width across window resizes (only the CAD view stretches).
+        #
+        # This can't be done synchronously here: at __init__ time this widget
+        # has not yet been embedded into the app's QTabWidget (that happens
+        # in main_window.create_new_tab(), right after DXFTab() — which calls
+        # this constructor — returns), so QSplitter.centralWidget().width()
+        # is still 0 and any setSizes() call here would be computed from a
+        # meaningless baseline. QTimer.singleShot(0, ...) defers the call to
+        # the next event-loop iteration, by which point the widget has its
+        # real, laid-out size.
+        QTimer.singleShot(0, self._shrink_sidebar_width)
+
+    def _shrink_sidebar_width(self):
+        """Shrink the sidebar to SIDEBAR_WIDTH_SCALE of its current (ezdxf
+        default) width, and pin it to a fixed pixel width thereafter.
+
+        centralWidget() is the outer horizontal QSplitter set up by
+        ezdxf's CADViewer.__init__ (container.addWidget(self._cad);
+        container.addWidget(self.sidebar)) — not stored as an attribute
+        there, so it's retrieved via centralWidget() rather than a saved
+        reference.
+        """
+        container = self.centralWidget()
+        if container is None:
+            return
+        sizes = container.sizes()
+        if len(sizes) != 2:
+            return
+        cad_width, sidebar_width = sizes
+        new_sidebar_width = int(sidebar_width * SIDEBAR_WIDTH_SCALE)
+        new_cad_width = cad_width + (sidebar_width - new_sidebar_width)
+        container.setSizes([new_cad_width, new_sidebar_width])
+        # Stretch factors govern how a QSplitter redistributes space on
+        # resize (not on first show): give all resize delta to the CAD view
+        # (index 0) and none to the sidebar (index 1), so the sidebar keeps
+        # this fixed pixel width when the main window is resized. Manual
+        # drag-resize of the splitter handle is unaffected.
+        container.setStretchFactor(0, 1)
+        container.setStretchFactor(1, 0)
 
     def _install_click_through_backend(self):
         """Inject _ClickThroughBackend into the CADWidget.
