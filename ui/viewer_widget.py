@@ -4,7 +4,10 @@ from ezdxf.addons.drawing.qtviewer import (
     CADViewer, CADWidget, CADGraphicsView, CADGraphicsViewWithOverlay,
 )
 from ezdxf.addons.drawing.config import Configuration
-from ezdxf.addons.drawing.pyqt import PyQtBackend
+from ezdxf.addons.drawing.pyqt import (
+    PyQtBackend, CorrespondingDXFEntity, CorrespondingDXFParentStack,
+)
+from ezdxf.math import Vec2, Vec3
 from ezdxf.npshapes import to_qpainter_path
 from PyQt5.QtCore import Qt, QEvent, QTimer
 from PyQt5.QtWidgets import QGraphicsView, QGraphicsPathItem
@@ -13,6 +16,55 @@ from PyQt5.QtGui import QBrush, QColor, QPainterPathStroker
 # 右側パネル（レイヤー表示・要素属性表示。ezdxf CADViewer の self.sidebar）の
 # 初期横幅を、ezdxf 側デフォルト（コンテナ幅の 1/4）の何%に縮小するか。
 SIDEBAR_WIDTH_SCALE = 0.65
+
+# 要素属性表示パネル・マウス座標表示の X/Y/Z 座標を表示する小数点以下桁数。
+# これは表示フォーマットのみに影響する（後述の _on_element_hovered 参照）。
+COORDINATE_DISPLAY_DECIMALS = 2
+
+
+def _format_dxf_attrib_value(value):
+    """要素属性表示パネル用に DXF 属性値を1行分フォーマットする。
+
+    座標・ベクトル値（Vec2/Vec3。ブロック(INSERT)展開後の仮想エンティティでも
+    直接配置エンティティでも常に Vec2/Vec3 型——ezdxf の str(Vec3(...)) は
+    "Vec3(...)" ではなく素の "(x, y, z)" タプル形式を返す点に注意。安全のため
+    念のためプレーンな座標タプルも同じ分岐で扱う）は COORDINATE_DISPLAY_DECIMALS
+    桁に丸める。半径・文字高さ・尺度・レイヤー名・色番号等（すべて単純な
+    float/str/int で Vec2/Vec3/座標タプルではない）はそのまま ezdxf の元の精度で
+    表示する。
+
+    ezdxf 自身の表示形式（str(Vec3(...)) の "(x, y, z)"）をそのまま踏襲し、
+    丸め以外の見た目の変更（"Vec3(...)" 等のプレフィックス付与）はしない。
+
+    文字列化した後のテキストを正規表現で丸める方式ではなく、値の型で判定する
+    のは、str() 表現だけでは Vec3/Vec2/座標タプルのいずれもが同じ "(x, y, z)"
+    /"(x, y)" 形式になり区別できない（＝正規表現では非座標のプレーンタプル
+    属性が万一あった場合と区別する手立てがない）ため。
+    """
+    if isinstance(value, (Vec2, Vec3)):
+        rounded = tuple(round(c, COORDINATE_DISPLAY_DECIMALS) for c in value.xyz) \
+            if isinstance(value, Vec3) else \
+            tuple(round(c, COORDINATE_DISPLAY_DECIMALS) for c in (value.x, value.y))
+        return str(rounded)
+    if (isinstance(value, tuple) and 2 <= len(value) <= 3
+            and all(isinstance(c, (int, float)) for c in value)):
+        rounded = tuple(round(float(c), COORDINATE_DISPLAY_DECIMALS) for c in value)
+        return str(rounded)
+    return str(value)
+
+
+def _entity_attribs_string_rounded(dxf_entity, indent=""):
+    """ezdxf の qtviewer._entity_attribs_string() 相当（座標のみ丸める版）。
+
+    DXF Attributes 一覧を1行ずつ整形する。ezdxf 本体の _entity_attribs_string()
+    は site-packages 内のサードパーティコードで直接編集できないため、
+    PinchZoomCADViewer._on_element_hovered() から呼ぶ代替実装として複製している。
+    ezdxf 側の将来のフォーマット変更はここには自動反映されない点に注意。
+    """
+    text = ""
+    for key, value in dxf_entity.dxf.all_existing_dxf_attribs().items():
+        text += f"{indent}- {key}: {_format_dxf_attrib_value(value)}\n"
+    return text
 
 
 class _ClickThroughPathItem(QGraphicsPathItem):
@@ -171,6 +223,69 @@ class PinchZoomCADViewer(CADViewer):
         # drag-resize of the splitter handle is unaffected.
         container.setStretchFactor(0, 1)
         container.setStretchFactor(1, 0)
+
+    def _on_mouse_moved(self, mouse_pos):
+        """Override ezdxf's 4-decimal mouse position display with
+        COORDINATE_DISPLAY_DECIMALS (2), matching the element-attribute
+        panel below it. Display-only — does not affect any coordinate used
+        for hit-testing, search, region detection, or export (all of those
+        read full-precision coordinates straight from the ezdxf document,
+        independent of this label's text)."""
+        self.mouse_pos.setText(
+            f"mouse position: {mouse_pos.x():.{COORDINATE_DISPLAY_DECIMALS}f}, "
+            f"{mouse_pos.y():.{COORDINATE_DISPLAY_DECIMALS}f}\n"
+        )
+
+    def _on_element_hovered(self, elements, index):
+        """Round Vec2/Vec3/coordinate-tuple (X/Y/Z) attribute values shown
+        in the element-attribute panel to COORDINATE_DISPLAY_DECIMALS places.
+
+        This is a copy of ezdxf's own CADViewer._on_element_hovered(),
+        substituting _entity_attribs_string_rounded() for
+        _entity_attribs_string() (site-packages code can't be edited
+        directly). A text-level regex substitution was considered instead of
+        this copy, but rejected: ezdxf's own display calls f"{value}" on
+        every DXF attribute, which for Vec2/Vec3 invokes __str__() — and
+        Vec3.__str__() returns a bare "(x, y, z)" tuple, not "Vec3(x, y, z)"
+        (that's only __repr__()). Since every non-coordinate tuple-shaped
+        attribute would render identically, a regex has no reliable anchor
+        to distinguish "this is a coordinate" from "this happens to also be
+        a 2-3 element numeric tuple" — the value's actual Python type (this
+        copy inspects it directly) is the only reliable signal. Future
+        ezdxf changes to this method's non-coordinate logic won't
+        automatically propagate here.
+
+        This is display-only. Rounding here does not touch the DXF entity's
+        actual attribute values (re-read fresh from the document on every
+        hover) or any other coordinate-based processing in the app (search
+        matching, region detection, hit-testing, export) — none of those
+        read from this panel, so there is no internal-precision tradeoff to
+        make by rounding the display.
+        """
+        if not elements:
+            text = "No element selected"
+        else:
+            text = f"Selected: {index + 1} / {len(elements)}    (click to cycle)\n"
+            element = elements[index]
+            dxf_entity = element.data(CorrespondingDXFEntity)
+            if isinstance(dxf_entity, str):
+                dxf_entity = self.load_dxf_entity(dxf_entity)
+            if dxf_entity is None:
+                text += "No data"
+            else:
+                text += (
+                    f"Selected Entity: {dxf_entity}\n"
+                    f"Layer: {dxf_entity.dxf.layer}\n\nDXF Attributes:\n"
+                )
+                text += _entity_attribs_string_rounded(dxf_entity)
+
+                dxf_parent_stack = element.data(CorrespondingDXFParentStack)
+                if dxf_parent_stack:
+                    text += "\nParents:\n"
+                    for entity in reversed(dxf_parent_stack):
+                        text += f"- {entity}\n"
+                        text += _entity_attribs_string_rounded(entity, indent="    ")
+        self.selected_info.setPlainText(text)
 
     def _install_click_through_backend(self):
         """Inject _ClickThroughBackend into the CADWidget.

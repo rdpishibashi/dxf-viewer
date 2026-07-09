@@ -230,6 +230,60 @@ def _shrink_sidebar_width(self):
 複数回のウィンドウリサイズでサイドバー幅が不変であること・複数タブそれぞれが独立して
 縮小されること、の3ケース）。
 
+### 要素属性表示・マウス座標表示の座標を小数点2桁に丸める（表示のみ、2026-07-09 追加）
+
+ezdxf `CADViewer._on_element_hovered()` / `_on_mouse_moved()` は、選択エンティティの
+DXF属性一覧（`selected_info`）・マウス座標ラベル（`mouse_pos`）の X/Y/Z 座標を
+フル精度（`Vec3.__str__()` の桁数そのまま、マウス座標は `.4f`）で表示する。
+`PinchZoomCADViewer` はこの2メソッドをオーバーライドし、座標のみ
+`COORDINATE_DISPLAY_DECIMALS`（2）桁に丸める。半径・文字高さ・尺度・レイヤー名・
+色番号等の非座標属性は ezdxf の元の精度のまま変更しない。
+
+**表示専用であり内部処理には一切影響しない**: `_on_element_hovered()` は
+`dxf_entity.dxf.all_existing_dxf_attribs()` を毎回その場で読み直すだけの
+読み取り専用の文字列整形処理であり、結果をどこにも保存・キャッシュしない。
+検索（`core/search_manager.py`）・領域検出（`core/region_detector.py`）・
+ヒットテスト（`_ClickThroughBackend` 等の描画バックエンド）・エクスポート
+（`utils/export_utils.py`）は、いずれもこのパネルの表示テキストとは無関係に、
+ezdxf のドキュメントオブジェクトから座標を直接読み取る別経路であるため、
+このパネルの表示桁数をいくら変えても他の処理の分解能には一切影響しない
+（＝「表示だけを丸める」と「実際の座標データも丸める」は独立した話であり、
+後者を追加で行う技術的必要性は無い。DXFファイルの実座標データ自体を書き換える
+のは、画面上でのレンダリング精度・将来のエクスポート精度・ヒットテスト精度を
+不必要に犠牲にするだけでメリットが無いため、あえて行わない）。
+
+```python
+def _format_dxf_attrib_value(value):
+    """Vec2/Vec3（座標）値のみ2桁に丸める。radius/char_height 等の非座標
+    float・str・int はそのまま。ezdxf 自身の表示（f"{value}" は Vec3.__str__()
+    を呼び、"Vec3(x, y, z)" ではなく素の "(x, y, z)" タプル形式を返す）と
+    同じ見た目を保ったまま丸める。"""
+    if isinstance(value, (Vec2, Vec3)):
+        ...  # 各成分を round() してから str(tuple) で ezdxf と同じ表記に戻す
+    if isinstance(value, tuple) and 2 <= len(value) <= 3 and all(...):
+        ...  # 念のため素の座標タプルも同様に扱う
+    return str(value)  # 非座標属性はそのまま
+```
+
+**なぜテキストの正規表現置換ではなく値の型で判定するか**: ezdxf の表示コードは
+DXF属性値を `f"{indent}- {key}: {value}\n"` で埋め込む——これは `value` の
+`__str__()` を呼ぶ（`__repr__()` ではない）。`Vec3.__str__()` は `"Vec3(x, y, z)"`
+ではなく素の `"(x, y, z)"` タプル形式を返す（`repr()` との違いを取り違えて
+`"Vec3(...)"` 文字列にマッチする正規表現で最初に実装し、実データで検証した際に
+誤りに気づいた）。この形式は非座標のプレーンタプル属性があった場合と文字列上
+区別できないため、正規表現ではなく値の実際の Python 型で判定する。
+
+`_on_element_hovered()` 自体は ezdxf `CADViewer._on_element_hovered()` の複製
+（site-packages 内のサードパーティコードは直接編集できないため）。座標整形部分
+（`_entity_attribs_string()` → `_entity_attribs_string_rounded()`）のみ差し替えて
+おり、それ以外のロジックは元のまま。ezdxf 側の将来のフォーマット変更はここには
+自動反映されない。
+
+回帰テスト: `tests/regression/test_coordinate_display_rounding.py`
+（`_format_dxf_attrib_value()`/`_entity_attribs_string_rounded()` の純粋関数
+テスト＋実サンプルDXF5件でのヘッドレスGUIスモークテスト。直接配置エンティティ・
+ブロック(INSERT)展開エンティティの両方、非座標属性が変更されないことを確認）。
+
 ### マルチタブ
 
 - `QTabWidget` + `DXFTab` データクラスで管理
@@ -802,7 +856,25 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-07-09（`ui/viewer_widget.py`: 右側サイドバー（レイヤー表示・要素属性表示）の
+*最終更新: 2026-07-09（`ui/viewer_widget.py`: 要素属性表示パネル・マウス座標表示の
+X/Y/Z座標を小数点2桁（`COORDINATE_DISPLAY_DECIMALS`）に丸めて表示するようにした
+（`PinchZoomCADViewer._on_element_hovered()`/`_on_mouse_moved()` が ezdxf 本体の
+同名メソッドをオーバーライド。Vec2/Vec3型の値のみ丸め、radius/char_height等の
+非座標属性は元の精度を維持）。**表示のみの変更で内部処理・保存データには一切
+影響しない**——エンティティ属性はホバーの都度 ezdxf ドキュメントから読み直す
+だけの読み取り専用処理で、検索・領域検出・ヒットテスト・エクスポートは
+いずれもこのパネルとは無関係に座標を直接読み取るため、実座標データを
+追加で丸める技術的必要性は無いと判断し行っていない（ユーザーからの
+「内部処理も丸めるべきか」という問いに対する検討結果）。当初は `"Vec3(...)"`
+文字列に対する正規表現置換で実装しようとしたが、ezdxf の表示コードは
+`Vec3.__str__()`（`"Vec3(...)"`ではなく素の`"(x, y, z)"`タプル形式を返す）を
+呼んでおり、`__repr__()`との違いを取り違えていたことに実データ検証で気づき、
+値の実際のPython型で判定する方式に変更した。回帰テスト
+`tests/regression/test_coordinate_display_rounding.py` を新設（純粋関数テスト＋
+実サンプルDXF5件でのGUIスモークテスト）。詳細は「要素属性表示・マウス座標表示の
+座標を小数点2桁に丸める」節参照。）*
+
+*過去の更新: 2026-07-09（`ui/viewer_widget.py`: 右側サイドバー（レイヤー表示・要素属性表示）の
 初期横幅を ezdxf デフォルトの65%（`SIDEBAR_WIDTH_SCALE`）に縮小し、ウィンドウのリサイズでは
 絶対幅が変わらないよう固定した（`QSplitter.setStretchFactor()` で CAD ビュー側にのみ
 リサイズ時の伸縮を割り当てる）。`PinchZoomCADViewer.__init__` 実行時点ではまだタブに
