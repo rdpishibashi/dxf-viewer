@@ -127,7 +127,7 @@ DEFAULT_REGION_CONFIG = {
     'span_level_merge': False,  # 共線結合のレベルを「スパンを構成した線分だけ」の平均で
                                 # 算出する（既定はレベルクラスタ全体の平均）。レベル汚染
                                 # フォールバック（analyze_dxf_regions 4パス目）が True で使う。
-    'area_ratio': 0.20,         # 単独の領域の最小面積（枠面積比）
+    'area_ratio': 0.15,         # 単独の領域の最小面積（枠面積比）
     'group_area_ratio': 0.10,   # 同名複数ピースを合算した場合の最小合計面積（枠面積比）
     'min_face_ratio': 0.005,    # 個々の閉領域として残す最小面積（枠面積比、ノイズ除去）
     'name_max_dist': 10.0,      # 名称ラベルの境界からの最大距離
@@ -1378,6 +1378,29 @@ def _detect_union_parents(regions, tol=1.0, area_tol=1.0):
     return result
 
 
+def _force_include_union_children(cands_list, area_tol=1.0, corner_tol=1.0):
+    """面積フィルタ未適用の生候補リスト `cands_list` に対して合体親（union parent）を
+    検出し、子側候補のインデックス集合を返す（呼び出し側が面積閾値を問わず採用する
+    ために使う。DXF-extract-labels 側 primary と同一実装。詳細はそちら参照）。
+
+    通常の採用判定（単独面積>=閾値、または同名2ピース合算>=10%）は、兄弟矩形が
+    互いに異なる名称を持ち、かつどちらも単独で閾値未満の場合に対応できない
+    （例: `DE5434-563-03A.dxf` の `SB-1A(FX1)`/`CN I/F B.D TYPE3(CN-IF3-1A)`）。
+    `_detect_union_parents` は面積一致・頂点包含・非重複という強い幾何学的根拠で
+    合体関係を判定するため、採用フィルタより前（全ての生候補が揃った時点）で
+    適用すれば、面積閾値に関わらず両方の子を正しく拾える。
+    """
+    if len(cands_list) < 3:
+        return set()
+    enriched = [dict(cf, corners=_polygon_corners(cf['polygon'])) for cf in cands_list]
+    parent_to_children = _detect_union_parents(enriched, tol=corner_tol, area_tol=area_tol)
+    child_idx = set()
+    for j, k in parent_to_children.values():
+        child_idx.add(j)
+        child_idx.add(k)
+    return child_idx
+
+
 def _is_valid_name_candidate(t, min_letters, exclude_lowercase, exclude_terms,
                               exclude_circuit_symbols, circuit_keep_terms):
     """領域名候補ラベルとして有効かを返す（ポリゴン非依存フィルタ）。
@@ -1753,13 +1776,17 @@ def analyze_dxf_regions(dxf_file, config=None):
                     target_names.add(nm)
 
         # 3) 採用条件: 個別面積>=単独閾値(20%)、または 名称がターゲット（複数ピース合算で
-        #    第1図面が閾値超）。ターゲット名称は他図面でも面積に関係なく採用。
+        #    第1図面が閾値超）、または合体親（union parent）の子と確認された候補
+        #    （`_force_include_union_children`、面積閾値を問わず採用。後述）。
+        #    ターゲット名称は他図面でも面積に関係なく採用。
         regions = []
         rid = 0
         for fi, cands_list in enumerate(frame_cands):
-            for cf in cands_list:
+            force_idx = _force_include_union_children(cands_list)
+            for cidx, cf in enumerate(cands_list):
                 if not (cf['area'] >= single_thr
-                        or (cf['default_name'] and cf['default_name'] in target_names)):
+                        or (cf['default_name'] and cf['default_name'] in target_names)
+                        or cidx in force_idx):
                     continue
                 regions.append({
                     'id': rid,
