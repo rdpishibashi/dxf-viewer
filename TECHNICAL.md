@@ -856,7 +856,25 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-07-09（`ui/viewer_widget.py`: 要素属性表示パネル・マウス座標表示の
+*最終更新: 2026-07-12（`core/region_detector.py`: 単独面積が閾値未満・かつ互いに異なる
+名称を持つ兄弟矩形が Search Boundary の検出結果から消える不具合を修正
+（DXF-extract-labels v1.7.5 から移植）。実例: `DE5434-563-03A.dxf` の
+`CN I/F B.D TYPE3 (CN-IF3-1A)`（面積比7.63%）が `SB-1A(FX1)`（7.7%）と並ぶ
+兄弟矩形で、どちらも単独の面積閾値未満・名称が異なるため同名2ピース合算の
+対象にもならず検出されなかった（合体親〈15.3%〉がたまたま `SB-1A(FX1)` と
+同名候補を共有した場合のみその兄弟だけが救済され、もう一方は候補にすら
+残らなかった）。`_force_include_union_children()` を新設し、合体親検出
+（`_detect_union_parents`）を面積フィルタより前の生候補リストに適用、確認できた
+合体親の子は面積閾値を問わず採用する。補完面ペア（`_detect_complement_pairs`）と
+競合する三つ組は対象から除外し、`EE6313-545-01D.dxf` の B CHAMBER 二重検出を
+回避。`DEFAULT_REGION_CONFIG['area_ratio']` の既定値も 0.20→0.15 に変更（primary
+側と同期。ただし Search Boundary は既に `RegionSearchManager._DEFAULT_AREA_RATIO`
+=0.10 を独自に使っており、この既定値変更自体の実挙動への影響は無い）。
+アルゴリズム本体は primary（DXF-extract-labels）と同一に保つ方針のため、
+テストは primary 側の回帰テスト
+`test_under_threshold_named_siblings_both_recovered_via_union_parent` で担保。）*
+
+*過去の更新: 2026-07-09（`ui/viewer_widget.py`: 要素属性表示パネル・マウス座標表示の
 X/Y/Z座標を小数点2桁（`COORDINATE_DISPLAY_DECIMALS`）に丸めて表示するようにした
 （`PinchZoomCADViewer._on_element_hovered()`/`_on_mouse_moved()` が ezdxf 本体の
 同名メソッドをオーバーライド。Vec2/Vec3型の値のみ丸め、radius/char_height等の
