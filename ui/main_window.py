@@ -146,14 +146,15 @@ class DXFViewerApp(QMainWindow):
     def update_ui_for_active_tab(self):
         """アクティブタブに合わせてUIを更新"""
         current_tab = self.get_current_tab()
-        
+
         if current_tab and hasattr(current_tab, 'tab_data'):
             tab_data = current_tab.tab_data
             file_loaded = tab_data.file_path is not None
-            
+
             # UI状態を更新
             self.update_ui_state(file_loaded=file_loaded)
-            
+            self._sync_layout_combo(tab_data)
+
             # ウィンドウタイトルとステータスバーを更新
             if file_loaded:
                 filename = os.path.basename(tab_data.file_path)
@@ -164,9 +165,51 @@ class DXFViewerApp(QMainWindow):
                 self.status_bar.showMessage("Ready")
         else:
             self.update_ui_state(file_loaded=False)
+            self._sync_layout_combo(None)
             self.setWindowTitle("DXF Viewer")
             self.status_bar.showMessage("Ready")
-    
+
+    def _sync_layout_combo(self, tab_data):
+        """Repopulate the toolbar layout combo for the given tab, or clear it.
+
+        Each tab has its own CAD viewer with its own independently tracked
+        current layout (Model or a paper-space layout), so this must run on
+        every tab switch as well as right after a file loads. Signals are
+        blocked while rebuilding so this repopulation itself doesn't trigger
+        on_layout_changed().
+        """
+        combo = self.layout_combo
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            if tab_data and tab_data.dxf_doc:
+                combo.addItems(list(tab_data.dxf_doc.layouts.names_in_taborder()))
+                combo.setCurrentText(tab_data.cad_viewer.current_layout_name())
+                combo.setEnabled(True)
+            else:
+                combo.setEnabled(False)
+        finally:
+            combo.blockSignals(False)
+
+    def on_layout_changed(self, name):
+        """Handle the toolbar layout combo box selection changing.
+
+        Switches the active tab's CAD viewer to draw the selected layout
+        (Model or a paper-space layout, e.g. a title block placed outside
+        Model space). No-ops on the blank/empty text combo.clear() emits
+        while being repopulated (that path also has signals blocked, but
+        this guard is cheap insurance) and when the selection doesn't
+        actually change.
+        """
+        if not name:
+            return
+        tab_data = self._current_tab_data()
+        if not tab_data or not tab_data.dxf_doc:
+            return
+        if name == tab_data.cad_viewer.current_layout_name():
+            return
+        tab_data.cad_viewer.draw_layout(name, reset_view=True)
+
     def open_file_dialog(self):
         """ファイル選択ダイアログを開く"""
         file_path, _ = QFileDialog.getOpenFileName(
@@ -754,9 +797,15 @@ class DXFViewerApp(QMainWindow):
                 if hasattr(tab_data.cad_viewer, 'clear_scene'):
                     tab_data.cad_viewer.clear_scene()
 
-                # Re-audit and reload the document completely
+                # Re-audit and reload the document completely, preserving
+                # whichever layout (Model or a paper-space layout) is
+                # currently displayed — otherwise this would silently snap
+                # back to "Model" every time (see Layout Switching in
+                # TECHNICAL.md).
                 auditor = tab_data.dxf_doc.audit()
-                tab_data.cad_viewer.set_document(tab_data.dxf_doc, auditor)
+                tab_data.cad_viewer.set_document(
+                    tab_data.dxf_doc, auditor,
+                    layout=tab_data.cad_viewer.current_layout_name())
 
                 # Restore view transform
                 if graphics_view and old_transform is not None:
