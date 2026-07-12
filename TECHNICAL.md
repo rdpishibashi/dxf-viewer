@@ -336,7 +336,7 @@ ezdxf純正の「Select Layout」メニューをmacOSのグローバルメニュ
 
 **実装**:
 - `ui/main_window_actions.py` の `create_toolbar()` に `QComboBox`
-  （`window.layout_combo`）をOpenボタンの隣に追加。
+  （`window.layout_combo`）を2段目ツールバーの末尾（Infoの後ろ）に追加。
 - `ui/viewer_widget.py` の `PinchZoomCADViewer.current_layout_name()`（新規）は
   `self._cad.current_layout`（ezdxfの`CADWidget`が持つ公開プロパティ）を返す薄い
   ヘルパー。`_cad`自体はezdxf `CADViewer`の非公開属性だが、既存の

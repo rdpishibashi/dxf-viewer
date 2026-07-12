@@ -272,9 +272,9 @@ keep it off macOS's global menu bar), so that content had no way to be
 displayed — not a rendering limit, just a missing UI affordance.
 
 ## Access
-- Toolbar → "Layout:" combo box, next to the Open button. Lists every
-  layout in the file (`Model` plus any paper-space layouts), in tab order.
-  Disabled when no file is loaded.
+- Toolbar → "Layout:" combo box, at the end of the second row (after Info).
+  Lists every layout in the file (`Model` plus any paper-space layouts), in
+  tab order. Disabled when no file is loaded.
 
 ## How It Works
 1. Selecting an entry calls `PinchZoomCADViewer.draw_layout(name,

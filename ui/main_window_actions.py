@@ -153,7 +153,7 @@ def create_menu_bar(window):
 
 
 def create_toolbar(window):
-    """ツールバーを作成（1段目: Open＋検索3グループ / 2段目: 色変更系＋Export/Info）"""
+    """ツールバーを作成（1段目: Open＋検索3グループ / 2段目: 色変更系＋Export/Info＋Layout）"""
     font = _ui_font()
 
     toolbar = QToolBar()
@@ -161,19 +161,6 @@ def create_toolbar(window):
     window.addToolBar(toolbar)
 
     toolbar.addAction(_make_action(window, 'Open', window.open_file_dialog, font))
-    toolbar.addSeparator()
-
-    # Layout selector — switches which layout (Model or a paper-space
-    # layout) the CAD viewer draws. Populated per-file in load_dxf() and
-    # kept in sync per-tab in update_ui_for_active_tab().
-    layout_label = QLabel('Layout:')
-    layout_label.setFont(font)
-    toolbar.addWidget(layout_label)
-    window.layout_combo = QComboBox()
-    window.layout_combo.setFont(font)
-    window.layout_combo.setEnabled(False)
-    window.layout_combo.currentTextChanged.connect(window.on_layout_changed)
-    toolbar.addWidget(window.layout_combo)
     toolbar.addSeparator()
 
     # Search Text group
@@ -205,7 +192,7 @@ def create_toolbar(window):
         action.setFont(font)
         toolbar.addAction(action)
 
-    # --- Second toolbar row: Change Colors onward, then Export/Info ---
+    # --- Second toolbar row: Change Colors onward, then Export/Info/Layout ---
     window.addToolBarBreak()
     toolbar2 = QToolBar()
     toolbar2.setFont(font)
@@ -238,6 +225,19 @@ def create_toolbar(window):
     window.toolbar_info_action = _make_action(
         window, 'Info', window.show_file_info, font, enabled=False)
     toolbar2.addAction(window.toolbar_info_action)
+    toolbar2.addSeparator()
+
+    # Layout selector — switches which layout (Model or a paper-space
+    # layout) the CAD viewer draws. Populated per-file in load_dxf() and
+    # kept in sync per-tab in update_ui_for_active_tab().
+    layout_label = QLabel('Layout:')
+    layout_label.setFont(font)
+    toolbar2.addWidget(layout_label)
+    window.layout_combo = QComboBox()
+    window.layout_combo.setFont(font)
+    window.layout_combo.setEnabled(False)
+    window.layout_combo.currentTextChanged.connect(window.on_layout_changed)
+    toolbar2.addWidget(window.layout_combo)
 
 
 def create_status_bar(window):
