@@ -11,7 +11,7 @@ enabled state); ``setIconText`` gives those actions a shorter label on the
 toolbar while the menu keeps the full text.
 """
 
-from PyQt5.QtWidgets import QAction, QStatusBar, QToolBar
+from PyQt5.QtWidgets import QAction, QComboBox, QLabel, QStatusBar, QToolBar
 from PyQt5.QtGui import QFont, QKeySequence
 
 _UI_FONT_POINT_SIZE = 14  # menu/toolbar font (default is too small on macOS)
@@ -161,6 +161,19 @@ def create_toolbar(window):
     window.addToolBar(toolbar)
 
     toolbar.addAction(_make_action(window, 'Open', window.open_file_dialog, font))
+    toolbar.addSeparator()
+
+    # Layout selector — switches which layout (Model or a paper-space
+    # layout) the CAD viewer draws. Populated per-file in load_dxf() and
+    # kept in sync per-tab in update_ui_for_active_tab().
+    layout_label = QLabel('Layout:')
+    layout_label.setFont(font)
+    toolbar.addWidget(layout_label)
+    window.layout_combo = QComboBox()
+    window.layout_combo.setFont(font)
+    window.layout_combo.setEnabled(False)
+    window.layout_combo.currentTextChanged.connect(window.on_layout_changed)
+    toolbar.addWidget(window.layout_combo)
     toolbar.addSeparator()
 
     # Search Text group

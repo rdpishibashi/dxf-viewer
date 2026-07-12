@@ -314,6 +314,15 @@ class PinchZoomCADViewer(CADViewer):
 
         return find_graphics_view_recursive(self)
 
+    def current_layout_name(self):
+        """Name of the layout ('Model' or a paper-space layout name) currently drawn.
+
+        ezdxf's CADWidget (self._cad) tracks this as a public `current_layout`
+        property, but CADViewer doesn't expose it itself — same pattern as
+        _install_click_through_backend() reaching into self._cad directly.
+        """
+        return self._cad.current_layout
+
     def set_background_color(self, color):
         """Set the background color of the graphics view.
 
