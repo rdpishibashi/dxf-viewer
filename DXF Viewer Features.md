@@ -261,6 +261,47 @@ Collapse a drawing's many source layers (ULVAC exports contain dozens of
 
 ---
 
+# E. Layout Switching Feature
+
+## Overview
+Some DXF files place the title block (drawing number, title text) outside
+Model space, in a separate paper-space layout (e.g. `EE6492-464-01B.dxf`'s
+title block lives in a layout named "ICADSX Layout"). The viewer used to
+draw Model space only and hid ezdxf's own built-in "Select Layout" menu (to
+keep it off macOS's global menu bar), so that content had no way to be
+displayed — not a rendering limit, just a missing UI affordance.
+
+## Access
+- Toolbar → "Layout:" combo box, next to the Open button. Lists every
+  layout in the file (`Model` plus any paper-space layouts), in tab order.
+  Disabled when no file is loaded.
+
+## How It Works
+1. Selecting an entry calls `PinchZoomCADViewer.draw_layout(name,
+   reset_view=True)` (from ezdxf's `CADViewer`), which redraws the scene
+   from that layout and zooms to fit it.
+2. Each tab tracks its own current layout independently (ezdxf's
+   `CADWidget` already does this per CAD viewer instance); switching tabs
+   re-syncs the combo box to that tab's own selection.
+3. `refresh_viewer()` — the shared re-render used by Search Text/Handle/
+   Boundary, Color change/restore, and Consolidate Layers — now passes
+   `layout=<the tab's current layout>` explicitly. Previously it always
+   redrew Model, so triggering any of those operations while a paper-space
+   layout was displayed would have silently snapped the view back to
+   Model.
+
+## Known Limitations
+- Search Text/Handle/Boundary, Color Change, and Consolidate Layers remain
+  modelspace-only (unchanged by this feature — see their own sections
+  above). Running them while a paper-space layout is displayed won't error,
+  but any highlight/effect is computed against modelspace and won't be
+  visible until you switch back to Model.
+- Export and File Information are unaffected either way: both always
+  operate on modelspace/the whole file regardless of which layout is
+  currently displayed.
+
+---
+
 # B. DXF Viewer - Color Change Feature
 
 ## Overview
@@ -398,4 +439,10 @@ Tools → Change All Entity Colors... → Select "Gray"
   directly by DXF handle (e.g. `#212A`), resolved via `doc.entitydb` so it
   works regardless of where the entity lives (modelspace, paperspace, or a
   block definition). Mutually exclusive with Text Search and Boundary Search.
+- 2026-07-12: Added Layout Switching (toolbar combo box) so paper-space
+  layouts — e.g. a title block placed outside Model space — can be viewed.
+  Fixed `refresh_viewer()` to preserve the active layout instead of always
+  redrawing Model, which Search/Color/Consolidate Layers all rely on via a
+  shared code path. Regression test at
+  `tests/regression/test_layout_switching.py`.
   Regression test at `tests/regression/test_handle_search.py`.
