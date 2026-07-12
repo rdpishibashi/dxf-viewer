@@ -284,6 +284,47 @@ def check_corner_search(name, analysis):
     return ok
 
 
+def check_search_boundary_default_area_ratio():
+    """Search Boundary's actual default area_ratio (10%,
+    `RegionSearchManager._DEFAULT_AREA_RATIO`) is lower than
+    `analyze_dxf_regions()`'s own default (15%, `DEFAULT_REGION_CONFIG
+    ['area_ratio']`) used by `check_file()` above via `EXPECTED`.
+
+    The 3-pass detection fallback gating bug (fixed 2026-07-12, ported from
+    DXF-extract-labels v1.7.11) — pass2/pass3 used to check "any threshold
+    hit across the *whole file*" before retrying a frame, so one frame that
+    already passed at the file's easier threshold silently starved a
+    *different* frame that genuinely needed the fallback — only manifested
+    for `DE5434-553-10B.dxf` at the lower 10% threshold: `CONTROL BOX CORE
+    FX`/`RX` went undetected specifically through Search Boundary's
+    real-world default, even though `check_file()`'s 15% check above already
+    passed. This exercises the exact threshold Search Boundary actually
+    uses, so a regression here would be caught even if `EXPECTED`'s 15%
+    check stays green.
+    """
+    path = _find_sample('DE5434-553-10B.dxf')
+    name = os.path.basename(path)
+    if not os.path.exists(path):
+        print(f"{name}: sample not found — skipping Search Boundary default area_ratio check")
+        return True
+
+    ratio = RegionSearchManager._DEFAULT_AREA_RATIO
+    analysis = analyze_dxf_regions(path, config={'area_ratio': ratio})
+    if analysis.get('error'):
+        print(f"{name}: FAIL (area_ratio={ratio}) analysis error: {analysis['error']}")
+        return False
+
+    names = {r['default_name'] for r in analysis['regions']}
+    ok = True
+    for expected_name in ('CONTROL BOX CORE FX', 'CONTROL BOX CORE RX'):
+        if expected_name not in names:
+            print(f"{name}: FAIL Search Boundary default area_ratio ({ratio}) "
+                  f"did not find {expected_name!r}")
+            ok = False
+    print(f"{name}: {'OK' if ok else 'FAIL'} (Search Boundary default area_ratio={ratio})")
+    return ok
+
+
 def main(argv):
     if argv[1:]:
         paths = argv[1:]
@@ -298,7 +339,9 @@ def main(argv):
         print("No EE*.dxf samples found — skipping region search regression.")
         print('PASS')
         return 0
-    ok = all(r is not False for r in [check_file(p) for p in paths])
+    results = [check_file(p) for p in paths]
+    results.append(check_search_boundary_default_area_ratio())
+    ok = all(r is not False for r in results)
     print('PASS' if ok else 'FAIL')
     return 0 if ok else 1
 
