@@ -289,6 +289,14 @@ displayed — not a rendering limit, just a missing UI affordance.
    redrew Model, so triggering any of those operations while a paper-space
    layout was displayed would have silently snapped the view back to
    Model.
+4. `PinchZoomCADViewer._install_dark_background_render_context()` forces
+   ACI color 7 ("adapts to background") to resolve to white on every
+   layout. ezdxf's `RenderContext` otherwise assumes Model space has a dark
+   background (color 7 → white) but paper-space layouts have a *light*
+   background — a printed sheet (color 7 → black). This viewer always uses
+   one fixed black canvas regardless of layout, so a paper-space layout
+   whose content is entirely color 7 (e.g. this file's title block) used to
+   render fully black-on-black — drawn, but invisible.
 
 ## Known Limitations
 - Search Text/Handle/Boundary, Color Change, and Consolidate Layers remain
@@ -296,6 +304,12 @@ displayed — not a rendering limit, just a missing UI affordance.
   above). Running them while a paper-space layout is displayed won't error,
   but any highlight/effect is computed against modelspace and won't be
   visible until you switch back to Model.
+- Changing the background color (Tools → Change Background Color) only
+  updates the Qt canvas brush — it does not update ezdxf's `RenderContext`,
+  which still resolves ACI color 7 assuming this viewer's fixed black
+  canvas. Picking a light background can make color-7 entities (white)
+  hard to read. This pre-existing gap applies to Model space too and isn't
+  specific to layout switching; fixing it is out of scope here.
 - Export and File Information are unaffected either way: both always
   operate on modelspace/the whole file regardless of which layout is
   currently displayed.
@@ -445,4 +459,12 @@ Tools → Change All Entity Colors... → Select "Gray"
   redrawing Model, which Search/Color/Consolidate Layers all rely on via a
   shared code path. Regression test at
   `tests/regression/test_layout_switching.py`.
+- 2026-07-12: Fixed paper-space layouts rendering fully black-on-black.
+  ezdxf's `RenderContext` assumes Paper space has a light (printed-sheet)
+  background and resolves ACI color 7 to black there, but this viewer
+  always uses a fixed black canvas — so a layout using color 7 throughout
+  (e.g. the title block above) was drawn but invisible. Added
+  `PinchZoomCADViewer._install_dark_background_render_context()` to force
+  color 7 to white on every layout. Regression test extended to check
+  rendered pen/brush colors in the title-block area.
   Regression test at `tests/regression/test_handle_search.py`.

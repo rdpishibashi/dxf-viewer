@@ -74,7 +74,16 @@ def run_combo_populated_with_layouts():
 
 def run_switching_layout_shows_title_block_text():
     """Switching to the paper-space layout actually draws it (no exception),
-    and current_layout_name() reflects the switch."""
+    current_layout_name() reflects the switch, and the title block — which
+    uses ACI color 7 throughout — renders white, not black.
+
+    Regression: ezdxf's RenderContext assumes paper-space layouts have a
+    light background (a printed sheet), so it resolves ACI color 7 to black
+    there by default. This viewer always uses one fixed black canvas for
+    every layout (see PinchZoomCADViewer._install_dark_background_render_
+    context()), so unpatched this renders the entire title block
+    black-on-black — invisible, even though it's being drawn.
+    """
     failures = []
     if not os.path.isfile(PAPER_SPACE_FILE):
         return [f"sample file not found, skipping: {PAPER_SPACE_FILE}"]
@@ -89,6 +98,30 @@ def run_switching_layout_shows_title_block_text():
             failures.append(
                 f"expected current_layout_name() == 'ICADSX Layout' after combo switch, got "
                 f"{tab_data.cad_viewer.current_layout_name()!r}")
+
+        # Title block text/lines sit around DXF coords (760-830, 17-57) —
+        # see JZB_0001's MTEXT insert points in the block definition.
+        from PyQt5.QtCore import QPointF, QRectF
+        graphics_view = tab_data.cad_viewer.graphics_view
+        rect = QRectF(QPointF(760, 17), QPointF(830, 57))
+        items = graphics_view.scene().items(rect)
+        if not items:
+            failures.append("no title-block items found in the expected area — nothing drawn there")
+        black_items = 0
+        for it in items:
+            pen = it.pen() if hasattr(it, 'pen') else None
+            brush = it.brush() if hasattr(it, 'brush') else None
+            pen_black = pen is not None and pen.color().name() == '#000000'
+            brush_black = (brush is not None and brush.style() != 0
+                           and brush.color().name() == '#000000')
+            if pen_black or brush_black:
+                black_items += 1
+        if black_items:
+            failures.append(
+                f"{black_items} of {len(items)} title-block item(s) render black "
+                "(invisible against the black background) — ACI color 7 was resolved "
+                "using the paper-space light-background assumption instead of this "
+                "viewer's fixed black canvas")
     except Exception as e:
         failures.append(f"switching to 'ICADSX Layout' raised: {e!r}")
     finally:

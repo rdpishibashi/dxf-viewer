@@ -4,6 +4,7 @@ from ezdxf.addons.drawing.qtviewer import (
     CADViewer, CADWidget, CADGraphicsView, CADGraphicsViewWithOverlay,
 )
 from ezdxf.addons.drawing.config import Configuration
+from ezdxf.addons.drawing.properties import LayoutProperties
 from ezdxf.addons.drawing.pyqt import (
     PyQtBackend, CorrespondingDXFEntity, CorrespondingDXFParentStack,
 )
@@ -167,6 +168,10 @@ class PinchZoomCADViewer(CADViewer):
         # inside them.
         self._install_click_through_backend()
 
+        # Make ACI color 7 (black/white, "adapts to background") resolve to
+        # white on every layout, not just Model.
+        self._install_dark_background_render_context()
+
         # Enable pinch gesture only
         self.grabGesture(Qt.PinchGesture)
 
@@ -286,6 +291,48 @@ class PinchZoomCADViewer(CADViewer):
                         text += f"- {entity}\n"
                         text += _entity_attribs_string_rounded(entity, indent="    ")
         self.selected_info.setPlainText(text)
+
+    def _install_dark_background_render_context(self):
+        """Force ezdxf to resolve ACI color 7 as white on every layout.
+
+        ezdxf's RenderContext assumes Model space has a dark background
+        (LayoutProperties.default_color -> white, so ACI 7 "adapts to
+        background" resolves to white) but assumes paper-space layouts have
+        a *light* background, i.e. a printed white sheet (resolves ACI 7 to
+        black) — see ezdxf.addons.drawing.properties.LayoutProperties
+        .from_layout(). This viewer always uses one fixed black canvas
+        (set_background_color()) for every layout, so that paper-space
+        assumption is wrong here: a paper-space layout whose content uses
+        ACI 7 throughout (e.g. EE6492-464-01B.dxf's "ICADSX Layout" title
+        block, entirely color 7) renders fully black-on-black and becomes
+        invisible the moment you switch to it.
+
+        CADWidget.draw_layout() calls RenderContext.set_current_layout()
+        every time, which unconditionally overwrites
+        current_layout_properties from the DXF layout's own type (Model vs
+        paper space) — there's no override hook for this (unlike layer
+        properties, which already have set_layer_properties_override()) —
+        so this wraps set_current_layout() itself, on the RenderContext
+        CADWidget builds fresh in set_document(), the same way
+        _install_click_through_backend() wraps _reset_backend().
+        """
+        cad = self._cad
+        original_make_render_context = cad._make_render_context
+
+        def _make_render_context(doc):
+            render_context = original_make_render_context(doc)
+            original_set_current_layout = render_context.set_current_layout
+
+            def set_current_layout(layout, ctb=""):
+                original_set_current_layout(layout, ctb)
+                render_context.current_layout_properties = LayoutProperties(
+                    layout.name, "#000000",
+                    units=render_context.current_layout_properties.units)
+
+            render_context.set_current_layout = set_current_layout
+            return render_context
+
+        cad._make_render_context = _make_render_context
 
     def _install_click_through_backend(self):
         """Inject _ClickThroughBackend into the CADWidget.
