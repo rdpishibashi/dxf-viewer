@@ -58,7 +58,10 @@ python dxf_viewer.py drawing1 drawing2
 
 - **Multi-tab Interface**: View multiple DXF files simultaneously
 - **Layout Switching**: Toolbar combo box to view paper-space layouts (e.g.
-  a title block placed outside Model space), not just Model
+  a title block placed outside Model space), not just Model. Files with an
+  "ICADSX Layout" (assembly drawings etc. from the ICADSX CAD tool) open
+  directly on that layout, since it holds the fully composed drawing;
+  everything else still defaults to Model
 - **Search**: Find text entities with customizable highlighting
 - **Boundary Search**: Find rectangular regions by name, or by pasting a vertex
   coordinate list (e.g. copied from DXF-extract-labels's region popover), and

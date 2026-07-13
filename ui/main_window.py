@@ -31,6 +31,19 @@ def patched_init(self, *args, **kwargs):
 
 Modelspace.__init__ = patched_init
 
+# 組立図等、ICADSXで作成されたDXFはタイトルブロック・寸法込みの完成図が
+# Model空間ではなく "ICADSX Layout" という名前のペーパースペースレイアウトに
+# VIEWPORT経由で構成されている（Model空間は同じ部品図形が未整理のまま散在）。
+# 存在すれば既定表示として優先する。
+PREFERRED_INITIAL_LAYOUT = "ICADSX Layout"
+
+
+def _initial_layout_name(doc):
+    """新規に開いたDXFドキュメントの初期表示レイアウト名を返す。"""
+    if PREFERRED_INITIAL_LAYOUT in doc.layouts.names_in_taborder():
+        return PREFERRED_INITIAL_LAYOUT
+    return "Model"
+
 
 class DXFViewerApp(QMainWindow):
     def __init__(self):
@@ -865,7 +878,8 @@ class DXFViewerApp(QMainWindow):
         try:
             # Audit the document
             auditor = tab.dxf_doc.audit()
-            tab.cad_viewer.set_document(tab.dxf_doc, auditor)
+            tab.cad_viewer.set_document(
+                tab.dxf_doc, auditor, layout=_initial_layout_name(tab.dxf_doc))
             if hasattr(tab.cad_viewer, 'zoom_extents'):
                 tab.cad_viewer.zoom_extents()
         except Exception as e:

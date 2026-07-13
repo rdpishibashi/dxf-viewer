@@ -7,7 +7,7 @@ Model space. DXF-viewer only ever drew "Model" and hid ezdxf's own built-in
 was no way to view that content at all — not a rendering limit, just a
 missing UI affordance.
 
-Fix: a toolbar layout combo box (`window.layout_combo`) drives
+Fix (2026-07-12): a toolbar layout combo box (`window.layout_combo`) drives
 `PinchZoomCADViewer.draw_layout()` directly. The one real regression risk
 this introduces: `refresh_viewer()` — the common re-render used by Search
 Text/Handle/Boundary, Color change/restore, and Consolidate Layers (9 call
@@ -15,6 +15,18 @@ sites) — used to call `set_document()` without a `layout=` argument, which
 defaults to "Model". Left unfixed, triggering any of those operations while
 a paper-space layout was displayed would have silently snapped the view
 back to Model. This test exercises that combination directly.
+
+Fix (2026-07-13): files created by the ICADSX CAD tool (assembly drawings
+etc.) place the fully composed drawing — title block, border, dimensions —
+in the "ICADSX Layout" paper-space layout via VIEWPORT entities that
+reference Model space; Model space itself holds the same part geometry
+unarranged (no border/title block/dimensions), so opening straight to
+Model previously required the user to manually switch every time. Verified
+across 20 real ICADSX-origin sample files: whenever a layout named exactly
+"ICADSX Layout" is present, it contains at least one VIEWPORT and is the
+intended default view; files without that exact layout name are unaffected
+and still default to Model (see `_initial_layout_name()` in
+`ui/main_window.py`).
 
 Run:
     python tests/regression/test_layout_switching.py
@@ -35,7 +47,10 @@ from PyQt5.QtWidgets import QApplication
 # (PyQt5 garbage-collects the QApplication singleton otherwise).
 _app = QApplication.instance() or QApplication([])
 
-PAPER_SPACE_FILE = '/Users/ryozo/Dropbox/Workspace/339_Unit内結線図/EE6492-464-01B.dxf'
+PAPER_SPACE_FILE = (
+    '/Users/ryozo/Dropbox/Workspace/展開図-結線図ラベル比較/339_Unit内結線図/'
+    'EE6492-464-01B.dxf'
+)
 MODEL_ONLY_SAMPLE = os.path.join(_ROOT, 'sample-dxf', 'samples', 'EE5611-695-04B.dxf')
 
 
@@ -45,7 +60,9 @@ def _make_window():
 
 
 def run_combo_populated_with_layouts():
-    """Opening a Model+PaperSpace file populates the combo and defaults to Model."""
+    """Opening a file with an "ICADSX Layout" populates the combo with both
+    layouts and defaults to "ICADSX Layout" (the fully composed drawing),
+    not "Model" (unarranged part geometry)."""
     failures = []
     if not os.path.isfile(PAPER_SPACE_FILE):
         return [f"sample file not found, skipping: {PAPER_SPACE_FILE}"]
@@ -61,11 +78,46 @@ def run_combo_populated_with_layouts():
         items = [window.layout_combo.itemText(i) for i in range(window.layout_combo.count())]
         if items != ['Model', 'ICADSX Layout']:
             failures.append(f"expected combo items ['Model', 'ICADSX Layout'], got {items}")
+        if window.layout_combo.currentText() != 'ICADSX Layout':
+            failures.append(
+                f"expected default selection 'ICADSX Layout', got "
+                f"{window.layout_combo.currentText()!r}")
+        if tab_data.cad_viewer.current_layout_name() != 'ICADSX Layout':
+            failures.append(
+                f"expected cad_viewer to be showing 'ICADSX Layout' initially, got "
+                f"{tab_data.cad_viewer.current_layout_name()!r}")
+    finally:
+        window.deleteLater()
+    return failures
+
+
+def run_file_without_icadsx_layout_still_defaults_to_model():
+    """Files that don't have a layout literally named "ICADSX Layout" (even
+    if they have some other paper-space layout, e.g. AutoCAD's generic
+    "Layout1") must be unaffected and keep defaulting to Model."""
+    failures = []
+    if not os.path.isfile(MODEL_ONLY_SAMPLE):
+        return [f"sample file not found, skipping: {MODEL_ONLY_SAMPLE}"]
+
+    window = _make_window()
+    try:
+        window.load_dxf(MODEL_ONLY_SAMPLE)
+        tab_data = window._current_tab_data()
+        if not tab_data or not tab_data.dxf_doc:
+            failures.append("file failed to load")
+            return failures
+
+        if 'ICADSX Layout' in tab_data.dxf_doc.layouts.names_in_taborder():
+            failures.append(
+                f"{MODEL_ONLY_SAMPLE} unexpectedly has an 'ICADSX Layout' — "
+                "pick a different sample for this negative case")
         if window.layout_combo.currentText() != 'Model':
-            failures.append(f"expected default selection 'Model', got {window.layout_combo.currentText()!r}")
+            failures.append(
+                f"expected default selection 'Model', got "
+                f"{window.layout_combo.currentText()!r}")
         if tab_data.cad_viewer.current_layout_name() != 'Model':
             failures.append(
-                f"expected cad_viewer to be showing Model initially, got "
+                f"expected cad_viewer to be showing 'Model' initially, got "
                 f"{tab_data.cad_viewer.current_layout_name()!r}")
     finally:
         window.deleteLater()
@@ -272,6 +324,7 @@ def run_export_and_file_info_unaffected():
 def main():
     all_failures = []
     all_failures.extend(run_combo_populated_with_layouts())
+    all_failures.extend(run_file_without_icadsx_layout_still_defaults_to_model())
     all_failures.extend(run_switching_layout_shows_title_block_text())
     all_failures.extend(run_refresh_viewer_preserves_paper_layout())
     all_failures.extend(run_tab_switch_syncs_combo_independently())

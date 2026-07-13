@@ -271,10 +271,24 @@ draw Model space only and hid ezdxf's own built-in "Select Layout" menu (to
 keep it off macOS's global menu bar), so that content had no way to be
 displayed — not a rendering limit, just a missing UI affordance.
 
+Files produced by the ICADSX CAD tool (assembly drawings etc.) go further:
+the fully composed drawing — border, title block, dimensions — lives
+entirely in the "ICADSX Layout" paper-space layout, built from VIEWPORT
+entities that reference and arrange Model space content. Model space itself
+holds the same part geometry unarranged, with no border/title
+block/dimensions, and isn't meant to be viewed directly. Verified across 20
+real ICADSX-origin sample files (2026-07-13): whenever a layout named
+exactly "ICADSX Layout" is present, it contains at least one VIEWPORT and
+is the intended view.
+
 ## Access
-- Toolbar → "Layout:" combo box, at the end of the second row (after Info).
-  Lists every layout in the file (`Model` plus any paper-space layouts), in
-  tab order. Disabled when no file is loaded.
+- Files containing a layout named exactly "ICADSX Layout" open on that
+  layout automatically (`_initial_layout_name()` in `ui/main_window.py`);
+  every other file still opens on Model, unchanged.
+- Toolbar → "Layout:" combo box, at the end of the second row (after Info),
+  remains available to switch manually. Lists every layout in the file
+  (`Model` plus any paper-space layouts), in tab order. Disabled when no
+  file is loaded.
 
 ## How It Works
 1. Selecting an entry calls `PinchZoomCADViewer.draw_layout(name,
