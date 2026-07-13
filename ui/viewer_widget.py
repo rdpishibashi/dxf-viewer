@@ -11,8 +11,10 @@ from ezdxf.addons.drawing.pyqt import (
 from ezdxf.math import Vec2, Vec3
 from ezdxf.npshapes import to_qpainter_path
 from PyQt5.QtCore import Qt, QEvent, QTimer
-from PyQt5.QtWidgets import QGraphicsView, QGraphicsPathItem
-from PyQt5.QtGui import QBrush, QColor, QPainterPathStroker
+from PyQt5.QtWidgets import (
+    QApplication, QGraphicsView, QGraphicsPathItem, QWidget
+)
+from PyQt5.QtGui import QBrush, QColor, QFont, QPainterPathStroker
 
 # 右側パネル（レイヤー表示・要素属性表示。ezdxf CADViewer の self.sidebar）の
 # 初期横幅を、ezdxf 側デフォルト（コンテナ幅の 1/4）の何%に縮小するか。
@@ -21,6 +23,11 @@ SIDEBAR_WIDTH_SCALE = 0.65
 # 要素属性表示パネル・マウス座標表示の X/Y/Z 座標を表示する小数点以下桁数。
 # これは表示フォーマットのみに影響する（後述の _on_element_hovered 参照）。
 COORDINATE_DISPLAY_DECIMALS = 2
+
+
+def _standard_ui_font():
+    app = QApplication.instance()
+    return QFont(app.font()) if app is not None else QFont()
 
 
 def _format_dxf_attrib_value(value):
@@ -162,6 +169,7 @@ class PinchZoomCADViewer(CADViewer):
         # so they don't appear in macOS's global menu bar.
         self.menuBar().setNativeMenuBar(False)
         self.menuBar().hide()
+        self._apply_standard_sidebar_font()
 
         # Replace PyQtBackend with _ClickThroughBackend so that closed path
         # entities (LWPOLYLINE etc.) do not block hover detection of entities
@@ -200,6 +208,18 @@ class PinchZoomCADViewer(CADViewer):
         # the next event-loop iteration, by which point the widget has its
         # real, laid-out size.
         QTimer.singleShot(0, self._shrink_sidebar_width)
+
+    def _apply_standard_sidebar_font(self):
+        """Use the platform default font in ezdxf's right-side sidebar."""
+        font = _standard_ui_font()
+        for attr in ("sidebar", "layers", "info", "mouse_pos"):
+            widget = getattr(self, attr, None)
+            if widget is not None:
+                widget.setFont(font)
+        sidebar = getattr(self, "sidebar", None)
+        if sidebar is not None:
+            for child in sidebar.findChildren(QWidget):
+                child.setFont(font)
 
     def _shrink_sidebar_width(self):
         """Shrink the sidebar to SIDEBAR_WIDTH_SCALE of its current (ezdxf

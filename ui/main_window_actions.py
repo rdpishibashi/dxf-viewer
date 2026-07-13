@@ -11,16 +11,14 @@ enabled state); ``setIconText`` gives those actions a shorter label on the
 toolbar while the menu keeps the full text.
 """
 
-from PyQt5.QtWidgets import QAction, QComboBox, QLabel, QStatusBar, QToolBar
+from PyQt5.QtWidgets import (
+    QAction, QApplication, QComboBox, QLabel, QStatusBar, QToolBar
+)
 from PyQt5.QtGui import QFont, QKeySequence
-
-_UI_FONT_POINT_SIZE = 14  # menu/toolbar font (default is too small on macOS)
 
 
 def _ui_font():
-    font = QFont()
-    font.setPointSize(_UI_FONT_POINT_SIZE)
-    return font
+    return QFont(QApplication.font())
 
 
 def _make_action(window, text, slot, font, shortcut=None, icon_text=None,
