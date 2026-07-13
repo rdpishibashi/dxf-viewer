@@ -70,7 +70,11 @@ EXPECTED = {
         'min_regions': 3,
         'queries': {
             ('SYSTEM', False, False): 1,
-            ('SB-1A', False, False): 2,
+            # Only region id=3 ('SB-1A(**S)') matches — confirmed against the
+            # actual drawing 2026-07-13. Corrected from a stale expectation
+            # of 2 (established 2026-06-15); this file has never had a
+            # second SB-1A region among its 3 regions.
+            ('SB-1A', False, False): 1,
             ('nonexist', False, False): 0,
         },
     },
@@ -122,7 +126,12 @@ EXPECTED = {
         'frames': 5,
         'min_regions': 8,
         'queries': {
-            ('LA CHAMBER', False, False): 3,
+            # Only regions id=3 and id=6 have default_name 'LA CHAMBER' —
+            # confirmed against the actual drawing 2026-07-13. Corrected
+            # from a stale expectation of 3 (established 2026-06-15); a
+            # third 'LA CHAMBER' region does not exist among the file's 10
+            # regions (id=2's default_name is the distinct 'LB CHAMBER').
+            ('LA CHAMBER', False, False): 2,
             ('CONTROL BOX CORE FX', False, False): 2,
             ('CONTROL BOX CORE RX', False, False): 2,
             ('NONEXIST', False, False): 0,
