@@ -169,6 +169,7 @@ class PinchZoomCADViewer(CADViewer):
         # so they don't appear in macOS's global menu bar.
         self.menuBar().setNativeMenuBar(False)
         self.menuBar().hide()
+        self.layers.setStyleSheet("")
         self._apply_standard_sidebar_font()
 
         # Replace PyQtBackend with _ClickThroughBackend so that closed path
@@ -212,6 +213,10 @@ class PinchZoomCADViewer(CADViewer):
     def _apply_standard_sidebar_font(self):
         """Use the platform default font in ezdxf's right-side sidebar."""
         font = _standard_ui_font()
+        if hasattr(self, "layers"):
+            # ezdxf's CADViewer hard-codes the layer list and checkbox font
+            # size in a stylesheet; clear it so the platform font can win.
+            self.layers.setStyleSheet("")
         for attr in ("sidebar", "layers", "info", "mouse_pos"):
             widget = getattr(self, attr, None)
             if widget is not None:
@@ -220,6 +225,23 @@ class PinchZoomCADViewer(CADViewer):
         if sidebar is not None:
             for child in sidebar.findChildren(QWidget):
                 child.setFont(font)
+        if hasattr(self, "_layer_checkboxes"):
+            for index, checkbox in self._layer_checkboxes():
+                checkbox.setFont(font)
+                item = self.layers.item(index)
+                if item is not None:
+                    item.setFont(font)
+                    item.setSizeHint(checkbox.sizeHint())
+
+    def set_document(self, *args, **kwargs):
+        result = super().set_document(*args, **kwargs)
+        self._apply_standard_sidebar_font()
+        return result
+
+    def draw_layout(self, *args, **kwargs):
+        result = super().draw_layout(*args, **kwargs)
+        self._apply_standard_sidebar_font()
+        return result
 
     def _shrink_sidebar_width(self):
         """Shrink the sidebar to SIDEBAR_WIDTH_SCALE of its current (ezdxf
