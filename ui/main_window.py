@@ -654,7 +654,7 @@ class DXFViewerApp(QMainWindow):
         # The first analysis (and the dim re-render) can take several seconds on
         # large files, so keep the busy cursor over the whole heavy operation.
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        area_ratio = params.get('min_area_pct', 10) / 100.0
+        area_ratio = params.get('min_area_pct', 5) / 100.0
         analysis = None
         matched = []
         try:

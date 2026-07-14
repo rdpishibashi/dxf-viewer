@@ -357,7 +357,7 @@ class BoundarySearchDialog(QDialog):
         area_layout.addWidget(QLabel("Minimum area (% of frame):"))
         self.min_area_spin = QSpinBox()
         self.min_area_spin.setRange(1, 99)
-        self.min_area_spin.setValue(10)
+        self.min_area_spin.setValue(5)
         self.min_area_spin.setSuffix(" %")
         self.min_area_spin.setToolTip(
             "Regions smaller than this percentage of the drawing frame are ignored.\n"

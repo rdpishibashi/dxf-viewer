@@ -54,15 +54,20 @@ EXPECTED = {
         'frames': 13,
         'min_regions': 20,
         'queries': {
-            ('RACK1', False, False): 18,   # 'RACK1' + 'MPD RACK1'
+            # area_ratio default lowered 15%->5% (v1.9.0, synced from
+            # DXF-extract-labels primary) surfaces 2 more small legitimate
+            # regions in this file: 'RACK1' (6.77%) and 'MPD RACK2 PANEL
+            # LIMIT' (7.64%), previously hidden below the 15% threshold.
+            # +1 each to the RACK1/MPD query counts (2026-07-15).
+            ('RACK1', False, False): 19,   # 'RACK1' (new) + 'MPD RACK1'
             ('rack1', True, False): 0,      # case-sensitive miss
-            ('MPD', False, False): 10,      # 'MPD RACK1' + 'MPD RACK2'
+            ('MPD', False, False): 11,      # 'MPD RACK1' + 'MPD RACK2' + 'MPD RACK2 PANEL LIMIT' (new)
             ('NONEXIST', False, False): 0,
             # Width-insensitive matching: a zenkaku query must still match
             # these hankaku-labeled regions (normalize_width folds it before
             # comparing; see utils/text_utils.py).
-            ('ＲＡＣＫ１', False, False): 18,
-            ('ＭＰＤ', False, False): 10,
+            ('ＲＡＣＫ１', False, False): 19,
+            ('ＭＰＤ', False, False): 11,
         },
     },
     'EE6888-602-01A.dxf': {
