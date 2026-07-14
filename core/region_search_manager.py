@@ -19,7 +19,7 @@ from utils.text_utils import normalize_width
 class RegionSearchManager:
     """Run and cache region detection, and match regions by name."""
 
-    _DEFAULT_AREA_RATIO = 0.10
+    _DEFAULT_AREA_RATIO = 0.05
 
     @staticmethod
     def get_analysis(tab_data, area_ratio=None):
@@ -30,7 +30,7 @@ class RegionSearchManager:
         detection reads from the file on disk, so it is unaffected by any color
         changes applied to the in-memory document.
 
-        When ``area_ratio`` differs from the default (0.10), the analysis is
+        When ``area_ratio`` differs from the default (0.05), the analysis is
         run with the custom threshold and the result is **not** stored in the
         cache (the cache always holds the default-threshold result so that
         subsequent default-threshold searches are still instant).
@@ -38,7 +38,7 @@ class RegionSearchManager:
         Args:
             tab_data: DXFTab instance (must have ``file_path``).
             area_ratio: Minimum region area as a fraction of the frame area
-                (e.g. 0.10 for 10%).  None → use the default 0.20.
+                (e.g. 0.05 for 5%).  None → use the default 0.05.
 
         Returns:
             The analysis dict, or None when the tab has no file path.

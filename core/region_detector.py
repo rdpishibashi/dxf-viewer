@@ -36,7 +36,7 @@ from collections import defaultdict
 
 import ezdxf
 
-from utils.text_utils import clean_mtext_format_codes
+from utils.text_utils import clean_mtext_format_codes, normalize_width
 
 
 # ============================================================
@@ -127,7 +127,7 @@ DEFAULT_REGION_CONFIG = {
     'span_level_merge': False,  # 共線結合のレベルを「スパンを構成した線分だけ」の平均で
                                 # 算出する（既定はレベルクラスタ全体の平均）。レベル汚染
                                 # フォールバック（analyze_dxf_regions 4パス目）が True で使う。
-    'area_ratio': 0.15,         # 単独の領域の最小面積（枠面積比）
+    'area_ratio': 0.05,         # 単独の領域の最小面積（枠面積比、整数%比較。v1.9.0で0.15から変更）
     'group_area_ratio': 0.10,   # 同名複数ピースを合算した場合の最小合計面積（枠面積比）
     'min_face_ratio': 0.005,    # 個々の閉領域として残す最小面積（枠面積比、ノイズ除去）
     'name_max_dist': 10.0,      # 名称ラベルの境界からの最大距離
@@ -146,6 +146,21 @@ DEFAULT_REGION_CONFIG = {
 # 内部定数（マジックナンバーの明示）
 _FRAME_MARGIN = 5       # 図面枠フィルタリング時の座標マージン（枠境界に対し ±5 単位で線分を収集）
 _MAX_FACE_NODES = 200_000  # 半面探索の暴走ループ防止: 頂点数がこれを超えたら無効とみなす
+
+
+def _area_ratio_met(area, frame_area, ratio):
+    """面積比較を整数%で行う（DXF-extract-labels primary v1.9.0 と同一実装）。
+
+    UI表示（四捨五入）と同じ丸めで面積比を整数化し、設定値（比率、例 0.05）も
+    同様に整数%化した上で `>=` 比較する。フロート同士の直接比較だと、表示上
+    「5%」に見える領域が僅かな誤差で不採用になる、逆に採用されるといった、
+    表示値と採否が食い違う挙動を防ぐ。
+    """
+    if frame_area <= 0:
+        return False
+    pct = round(100.0 * area / frame_area)
+    ratio_pct = round(ratio * 100)
+    return pct >= ratio_pct
 
 
 # ============================================================
@@ -977,6 +992,11 @@ def _filter_eligible_labels(labels, min_letters, exclude_lowercase, exclude_term
         if exclude_lowercase and any(_is_lowercase_letter(ch) for ch in t):
             continue
         up = t.upper()
+        # 矩形領域名称の1文字目に "(" が来ることはない（例: 全角 "（ＣＬＯＳＥ）" は
+        # 状態表示ラベルであり領域名ではない）。途中に "(" を含む名称
+        # （例 "TMP (TMP-1003LM)"）は対象外（v1.9.0、DXF-extract-labels primary から移植）。
+        if normalize_width(t).strip().startswith('('):
+            continue
         if any(term.upper() in up for term in terms):
             continue
         if exclude_circuit_symbols and not any(k in up for k in keep_terms_upper):
@@ -1302,7 +1322,24 @@ def _resolve_complement_faces(regions, frame_area, next_id=None):
     if next_id is None:
         next_id = max((r['id'] for r in regions), default=-1) + 1
 
-    to_remove = {large_i for large_i, _ in pairs}
+    # 同じ large_i に複数の small_i パートナーが見つかる場合がある——大きい方の
+    # 兄弟との補完ペアに加え、area_ratio 引き下げ（v1.9.0）により小さい方の
+    # 兄弟自体も独立採用され、同じ large_i の補完パートナーとして二重にマッチ
+    # してしまうケース（`EE6313-545-01D.dxf`。primary側で確認・修正）。各 large_i
+    # につき面積最大の small_i のみを基準面として差分抽出に使い、それ以外の
+    # small_i は「差分抽出で正しい名称のサブ領域として再生成される側の重複」と
+    # みなして除去する。
+    best_small_for_large = {}
+    for large_i, small_i in pairs:
+        cur = best_small_for_large.get(large_i)
+        if cur is None or regions[small_i]['area'] > regions[cur]['area']:
+            best_small_for_large[large_i] = small_i
+    redundant_small = {small_i for large_i, small_i in pairs
+                       if small_i != best_small_for_large[large_i]}
+    pairs = [(large_i, small_i) for large_i, small_i in pairs
+             if small_i == best_small_for_large[large_i]]
+
+    to_remove = {large_i for large_i, _ in pairs} | redundant_small
     new_regions = [r for i, r in enumerate(regions) if i not in to_remove]
 
     for large_i, small_i in pairs:
@@ -1378,7 +1415,7 @@ def _detect_union_parents(regions, tol=1.0, area_tol=1.0):
     return result
 
 
-def _force_include_union_children(cands_list, area_tol=1.0, corner_tol=1.0):
+def _force_include_union_children(cands_list, frame_area, area_ratio, area_tol=1.0, corner_tol=1.0):
     """面積フィルタ未適用の生候補リスト `cands_list` に対して合体親（union parent）を
     検出し、子側候補のインデックス集合を返す（呼び出し側が面積閾値を問わず採用する
     ために使う。DXF-extract-labels 側 primary と同一実装。詳細はそちら参照）。
@@ -1389,13 +1426,21 @@ def _force_include_union_children(cands_list, area_tol=1.0, corner_tol=1.0):
     `_detect_union_parents` は面積一致・頂点包含・非重複という強い幾何学的根拠で
     合体関係を判定するため、採用フィルタより前（全ての生候補が揃った時点）で
     適用すれば、面積閾値に関わらず両方の子を正しく拾える。
+
+    **合体親自身が単独面積閾値を満たす場合のみ**子をバイパス採用する
+    （`frame_area`・`area_ratio` によるゲート、v1.9.0）。ゲートが無いと、単独では
+    閾値未満の異名兄弟2つの合体面がたまたま結合されただけの、実体の薄い小さな
+    親でも子だけが無条件採用されてしまう（primary側 area_ratio を15%→5%に
+    下げたことで顕在化。DXF-extract-labels primary から移植）。
     """
     if len(cands_list) < 3:
         return set()
     enriched = [dict(cf, corners=_polygon_corners(cf['polygon'])) for cf in cands_list]
     parent_to_children = _detect_union_parents(enriched, tol=corner_tol, area_tol=area_tol)
     child_idx = set()
-    for j, k in parent_to_children.values():
+    for i, (j, k) in parent_to_children.items():
+        if not _area_ratio_met(enriched[i]['area'], frame_area, area_ratio):
+            continue
         child_idx.add(j)
         child_idx.add(k)
     return child_idx
@@ -1412,6 +1457,9 @@ def _is_valid_name_candidate(t, min_letters, exclude_lowercase, exclude_terms,
     if exclude_lowercase and any(_is_lowercase_letter(ch) for ch in t):
         return False
     up = t.upper()
+    # 矩形領域名称の1文字目に "(" が来ることはない（v1.9.0、primary から移植）。
+    if normalize_width(t).strip().startswith('('):
+        return False
     if any(term.upper() in up for term in (exclude_terms or ())):
         return False
     if exclude_circuit_symbols and not any(k.upper() in up for k in (circuit_keep_terms or ())):
@@ -1689,8 +1737,16 @@ def analyze_dxf_regions(dxf_file, config=None):
             frame_labels.append((clean_text, x, y))
         result['labels'] = frame_labels
 
-        single_thr = frame_area * cfg['area_ratio']            # 単独領域の閾値(20%)
-        group_thr = frame_area * cfg.get('group_area_ratio', 0.10)  # 同名複数ピース合算の閾値(10%)
+        area_ratio = cfg['area_ratio']                      # 単独領域の閾値（整数%比較）
+        group_ratio = cfg.get('group_area_ratio', 0.10)      # 同名複数ピース合算の閾値（整数%比較）
+        # エスカレーション（LWPOLYLINE追加・90°回転橋渡し・レベル汚染フォールバック）の
+        # 発動判定は、単独採用閾値(area_ratio)とは独立の gate_ratio を用いる（v1.9.0、
+        # primary から移植）。area_ratio の既定値を15%→5%に下げたことで、単独採用には
+        # 満たない小さな候補（従来なら「ゼロ件」扱いでエスカレーションが発動していた）が
+        # 5%以上というだけでヒット扱いになり、エスカレーションが発動しなくなる副作用が
+        # あった。gate_ratio は area_ratio と 0.15（エスカレーション機構が実データで
+        # 検証された時点の既定値）の大きい方とする。
+        gate_ratio = max(area_ratio, 0.15)
         rotated = _is_globally_rotated(label_entities)
         rotated_edge_roles = _rotated_edge_roles(label_entities) if rotated else None
         # frame_labels はこの後の全パス・全領域で不変なので、テキスト→座標の逆引き
@@ -1703,9 +1759,26 @@ def analyze_dxf_regions(dxf_file, config=None):
             lines_for_detection, cfg, frames, frame_area, frame_labels,
             connection_points, rotated_edge_roles, labels_by_text)
 
-        def _zero_hit_frame_indices(cands):
+        def _zero_hit_frame_indices(cands, ratio):
             return [fi for fi, cl in enumerate(cands)
-                    if not any(cf['area'] >= single_thr for cf in cl)]
+                    if not any(_area_ratio_met(cf['area'], frame_area, ratio) for cf in cl)]
+
+        def _bbox_key(cf):
+            xs = [p[0] for p in cf['polygon']]
+            ys = [p[1] for p in cf['polygon']]
+            return (round(min(xs)), round(max(xs)), round(min(ys)), round(max(ys)))
+
+        def _merge_cands_lists(base_list, extra_list):
+            """base_list を優先しつつ、extra_list にのみ存在する候補(bbox基準)を
+            追加する（置き換えではなく合算。v1.9.0、primary から移植）。"""
+            seen = {_bbox_key(cf) for cf in base_list}
+            merged = list(base_list)
+            for cf in extra_list:
+                k = _bbox_key(cf)
+                if k not in seen:
+                    seen.add(k)
+                    merged.append(cf)
+            return merged
 
         # LINE だけで閾値超え候補がゼロだった図面枠に限り、LWPOLYLINE を追加して
         # 再検出する（例: EE6888-631-01A.dxf など境界が LWPOLYLINE で描かれた図面
@@ -1718,7 +1791,12 @@ def analyze_dxf_regions(dxf_file, config=None):
         # 発覚の手がかりだった。DXF-extract-labels v1.7.11 から移植）。
         # LINE でも十分な候補がある図面枠には LWPOLYLINE を追加しない
         # （小部品の LWPOLYLINE が境界線の corner-partner 判定を誤らせるため）。
-        zero_fis = _zero_hit_frame_indices(frame_cands)
+        # このゲートは gate_ratio で判定し（v1.9.0）、採用は「置き換え」ではなく
+        # 「合算」（`_merge_cands_lists`）で行う——LWPOLYLINE追加は corner-partner
+        # 判定を乱し、LINE-onlyで既に正しく検出できていた候補を壊れた別の候補に
+        # 化けさせて消してしまうことがあるため（primary の `SYSTEM I/F BOX **` で
+        # 確認）。
+        zero_fis = _zero_hit_frame_indices(frame_cands, gate_ratio)
         if zero_fis and region_lines_lp:
             lines_for_detection = region_lines + region_lines_lp
             sub_frames = [frames[fi] for fi in zero_fis]
@@ -1726,7 +1804,7 @@ def analyze_dxf_regions(dxf_file, config=None):
                 lines_for_detection, cfg, sub_frames, frame_area, frame_labels,
                 connection_points, rotated_edge_roles, labels_by_text)
             for j, fi in enumerate(zero_fis):
-                frame_cands[fi] = fc2[j]
+                frame_cands[fi] = _merge_cands_lists(frame_cands[fi], fc2[j])
 
         # それでも閾値超え候補がゼロだった図面枠に限り、かつラベルの過半数が90°回転
         # している（=図面全体が90°回転して描かれている）場合のみ、横線分のギャップ
@@ -1739,7 +1817,7 @@ def analyze_dxf_regions(dxf_file, config=None):
         # も橋渡ししてしまうと、無関係な隣接矩形を誤って結合する副作用があるため
         # （`_is_globally_rotated` 参照）。
         det_cfg = cfg
-        zero_fis = _zero_hit_frame_indices(frame_cands)
+        zero_fis = _zero_hit_frame_indices(frame_cands, gate_ratio)
         if zero_fis and rotated:
             det_cfg = dict(cfg)
             det_cfg['bridge_horizontal_gaps'] = True
@@ -1759,11 +1837,11 @@ def analyze_dxf_regions(dxf_file, config=None):
         #   （全枠ゼロの図面タイプ〔電源基板の回路図等〕では発動しない）
         # 採用条件: 回復した領域の名称が他枠で検出済みの名称と一致する枠のみ置き換える
         zero_fis = [fi for fi, cl in enumerate(frame_cands)
-                    if not any(cf['area'] >= single_thr for cf in cl)]
+                    if not any(_area_ratio_met(cf['area'], frame_area, gate_ratio) for cf in cl)]
         hit_names = {cf['default_name']
                      for fi, cl in enumerate(frame_cands) if fi not in zero_fis
                      for cf in cl
-                     if cf['area'] >= single_thr and cf['default_name']}
+                     if _area_ratio_met(cf['area'], frame_area, gate_ratio) and cf['default_name']}
         if zero_fis and hit_names:
             cfg_span = dict(det_cfg)
             cfg_span['span_level_merge'] = True
@@ -1772,11 +1850,11 @@ def analyze_dxf_regions(dxf_file, config=None):
                 lines_for_detection, cfg_span, sub_frames, frame_area, frame_labels,
                 connection_points, rotated_edge_roles, labels_by_text)
             for j, fi in enumerate(zero_fis):
-                if any(cf['area'] >= single_thr and cf['default_name'] in hit_names
+                if any(_area_ratio_met(cf['area'], frame_area, gate_ratio) and cf['default_name'] in hit_names
                        for cf in fc2[j]):
                     frame_cands[fi] = fc2[j]
 
-        # 2) 第1図面（最左フレーム）で「同名複数ピース合算>=group_thr」となる名称を
+        # 2) 第1図面（最左フレーム）で「同名複数ピース合算>=group_ratio」となる名称を
         #    ターゲットとする（MPD RACK2 のように2矩形で合算が閾値超のケース）。
         #    他図面では、このターゲット名称の矩形を面積に関係なく抽出する。
         target_names = set()
@@ -1786,19 +1864,19 @@ def analyze_dxf_regions(dxf_file, config=None):
                 if cf['default_name']:
                     by_name[cf['default_name']].append(cf['area'])
             for nm, areas in by_name.items():
-                if len(areas) >= 2 and sum(areas) >= group_thr:
+                if len(areas) >= 2 and _area_ratio_met(sum(areas), frame_area, group_ratio):
                     target_names.add(nm)
 
-        # 3) 採用条件: 個別面積>=単独閾値(20%)、または 名称がターゲット（複数ピース合算で
+        # 3) 採用条件: 個別面積>=単独閾値、または 名称がターゲット（複数ピース合算で
         #    第1図面が閾値超）、または合体親（union parent）の子と確認された候補
         #    （`_force_include_union_children`、面積閾値を問わず採用。後述）。
         #    ターゲット名称は他図面でも面積に関係なく採用。
         regions = []
         rid = 0
         for fi, cands_list in enumerate(frame_cands):
-            force_idx = _force_include_union_children(cands_list)
+            force_idx = _force_include_union_children(cands_list, frame_area, area_ratio)
             for cidx, cf in enumerate(cands_list):
-                if not (cf['area'] >= single_thr
+                if not (_area_ratio_met(cf['area'], frame_area, area_ratio)
                         or (cf['default_name'] and cf['default_name'] in target_names)
                         or cidx in force_idx):
                     continue

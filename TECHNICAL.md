@@ -1027,7 +1027,31 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
-*最終更新: 2026-07-13（"ICADSX Layout"を持つファイル（組立図等）を開いた際、
+*最終更新: 2026-07-15（`core/region_detector.py` に DXF-extract-labels primary
+v1.9.0 の変更を移植。**(1)** 面積比較を整数%（四捨五入）・`>=` で行う
+`_area_ratio_met()` を導入し、`DEFAULT_REGION_CONFIG['area_ratio']` を
+0.15→0.05に変更。**(2)** area_ratio引き下げに伴い、90°回転橋渡しパス・
+レベル汚染フォールバック・LWPOLYLINE追加パスの発動ゲートが、単独採用には
+満たない小さな候補だけでヒット扱いされ発動しなくなる副作用が生じたため、
+area_ratioとは独立の`gate_ratio = max(area_ratio, 0.15)`で判定するよう変更。
+LWPOLYLINE追加パスは、corner-partner判定を乱して既存の正しい検出結果を
+壊す副作用があるため、「置き換え」ではなく「bboxが未出現の候補だけ追加する」
+合算方式（`_merge_cands_lists`）に変更。**(3)** `_force_include_union_children`
+（合体親バイパス採用）に、合体親自身が単独面積閾値を満たす場合のみという
+ゲートを追加。**(4)** 領域名称候補（`_filter_eligible_labels`・
+`_is_valid_name_candidate`の両方）に、1文字目が"("（全角"（"含む）のラベルを
+除外する判定を追加。**(5)** `_resolve_complement_faces`を、同じ合体面
+（large_i）に対して複数のsmall_iパートナーが二重マッチする場合に、面積最大の
+small_iのみを基準面として使うよう修正（二重領域・誤命名を防止）。
+`RegionSearchManager._DEFAULT_AREA_RATIO`・ダイアログ spinbox デフォルト・
+`get_analysis`呼び出し側のデフォルト渡し（計3箇所）も 0.10→0.05 に変更
+（primaryのarea_ratio既定値変更に合わせてSearch Boundaryの既定値も引き下げ、
+ユーザー指示）。`EE6868-500-01C.dxf`でarea_ratio=5%化により新たに検出される
+2領域（'RACK1'・'MPD RACK2 PANEL LIMIT'）分、`test_region_search.py`の
+'RACK1'/'MPD'クエリ期待値を更新。全回帰テスト（8スクリプト）PASS。詳細は
+「領域検索 / Boundary Search」節参照。）*
+
+*過去の更新: 2026-07-13（"ICADSX Layout"を持つファイル（組立図等）を開いた際、
 初期表示レイアウトを従来の"Model"から"ICADSX Layout"へ自動選択するよう変更。
 Model空間には罫線・タイトルブロック・寸法を持たない未整理の部品図形しかなく、
 完成図はVIEWPORT経由で"ICADSX Layout"側に構成されているため、従来は毎回手動での
