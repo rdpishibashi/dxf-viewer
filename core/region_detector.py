@@ -1813,7 +1813,9 @@ def analyze_dxf_regions(dxf_file, config=None):
         frames = detect_drawing_frames(frame_lines, cfg['snap'])
         result['frames'] = frames
         if not frames:
-            result['error'] = ('図面枠（太さ %d の線で囲まれた枠）が見つかりませんでした。'
+            # 「何が実施できなかったか」を明確に伝える文言（primary v1.8.3 から移植、2026-07-16）。
+            result['error'] = ('図面枠（太さ %d の線で囲まれた枠）が見つからなかったため、'
+                               '領域探索を実施することができませんでした。'
                                % cfg['frame_lineweight'])
             return result
         frame_area = (frames[0][1] - frames[0][0]) * (frames[0][3] - frames[0][2])
