@@ -781,6 +781,78 @@ def _find_rectilinear_faces(Hm, Vm, eps):
     return faces, dangling_branches
 
 
+def _branch_leaf_points(branch, attach_tol=0.5):
+    """行き止まり枝(branch)の座標グラフの中で、取り付け点(attachment)以外の
+    次数1端点(leaf、枝の"先端")を返す。通常は1点（単純な行き止まり）。
+
+    primary（DXF-extract-labels/utils/region_detector.py）からの移植。"""
+    edges = branch.get('edges') or []
+    deg = {}
+    for (p1, p2) in edges:
+        deg[p1] = deg.get(p1, 0) + 1
+        deg[p2] = deg.get(p2, 0) + 1
+    attachment = branch.get('attachment')
+    leaves = []
+    for pt, d in deg.items():
+        if d != 1:
+            continue
+        if attachment is not None and math.hypot(pt[0] - attachment[0], pt[1] - attachment[1]) <= attach_tol:
+            continue
+        leaves.append(pt)
+    return leaves
+
+
+def _resplit_face_with_dangling(face_poly, dangling_branches, Hm, Vm, fsnap, local_tol, margin=2.0):
+    """1つの閉領域(face_poly)について、その境界に取り付く行き止まり枝のうち
+    「反対側の端点(leaf)も同じ face_poly の境界に近接する」ものがあれば、
+    face_poly の bbox 内だけに限定して面探索をやり直し、未接続だった内部の
+    仕切り線を復元する。
+
+    グローバルな face_snap やレベル平均化方式には一切触れない——溶接が必要と
+    判明した face の bbox 内という限定された範囲でだけ、より緩い許容誤差
+    （`local_tol`、merge_level_tol 由来の上限）で再接続を試みる。これにより、
+    無関係な遠方の線分同士を誤って結合するリスクを避ける（`EE6888-650-01C.dxf`
+    の FL1F①②③、`_merge_collinear` のレベル平均化ドリフトで内部仕切りの
+    T字接合が face_snap=0.1 では繋がらず、外周だけの1領域に誤マージされていた
+    不具合）。グローバルな face_snap 拡大・レベル平均化方式変更はいずれも無関係な
+    別ファイルの誤結合を誘発したため、この局所再トレース方式に切替。
+
+    primary（DXF-extract-labels/utils/region_detector.py）v1.9.1 からの移植
+    （2026-07-15）。
+
+    戻り値: sub_faces | None。2面以上に分割できた場合のみ非Noneのリスト
+    （元のfaceそのものも含む。合体親候補として後段のN子合体親解消に利用する）。
+    """
+    attach_tol = max(fsnap, 0.5)
+    triggered = False
+    for br in dangling_branches:
+        att = br.get('attachment')
+        if att is None or _dist_point_to_polygon(att, face_poly) > attach_tol:
+            continue
+        for leaf in _branch_leaf_points(br, attach_tol):
+            if _dist_point_to_polygon(leaf, face_poly) <= local_tol:
+                triggered = True
+                break
+        if triggered:
+            break
+    if not triggered:
+        return None
+
+    xs = [p[0] for p in face_poly]
+    ys = [p[1] for p in face_poly]
+    bx0, bx1 = min(xs) - margin, max(xs) + margin
+    by0, by1 = min(ys) - margin, max(ys) + margin
+    local_H = [h for h in Hm if by0 <= h[0] <= by1 and h[2] >= bx0 and h[1] <= bx1]
+    local_V = [v for v in Vm if bx0 <= v[0] <= bx1 and v[2] >= by0 and v[1] <= by1]
+    sub_faces, _sub_dangling = _find_rectilinear_faces(local_H, local_V, local_tol)
+    result = [f for f in sub_faces
+              if all(bx0 - 1 <= x <= bx1 + 1 for x, _y in f)
+              and all(by0 - 1 <= y <= by1 + 1 for _x, y in f)]
+    if len(result) <= 1:
+        return None
+    return result
+
+
 def _detect_regions(RH, RV, frame, frame_area, cfg, labels=None, circles=None):
     """1つの図面枠内で、面積>=枠面積×area_ratio の閉領域を検出する。"""
     xl, xr, y0, y1 = frame
@@ -825,7 +897,19 @@ def _detect_regions(RH, RV, frame, frame_area, cfg, labels=None, circles=None):
                           span_levels=span_levels)
     # 端点接続ベースの面探索（中ほど交差では繋がない）ため、部品矩形の縦線は領域辺の
     # 途中を横切るだけで接続せず、回り込みは発生しない。
-    faces, _dangling = _find_rectilinear_faces(Hm, Vm, fsnap)
+    faces, dangling = _find_rectilinear_faces(Hm, Vm, fsnap)
+    # 局所修復（primary v1.9.1 からの移植）: 行き止まり枝の反対端点も同じ face の
+    # 境界に近接する場合、その face の bbox 内だけに限定して再トレースし、内部仕切り
+    # の未接続T字を復元する（`_resplit_face_with_dangling` 参照）。
+    local_tol = max(mtol, 0.5)
+    expanded_faces = []
+    for f in faces:
+        sub = _resplit_face_with_dangling(f, dangling, Hm, Vm, fsnap, local_tol)
+        if sub:
+            expanded_faces.extend(sub)
+        else:
+            expanded_faces.append(f)
+    faces = expanded_faces
     thr = frame_area * cfg.get('min_face_ratio', 0.005)
     regions = []
     seen = set()
@@ -1371,46 +1455,51 @@ def _resolve_complement_faces(regions, frame_area, next_id=None):
 
 
 def _detect_union_parents(regions, tol=1.0, area_tol=1.0):
-    """結合親領域（union parent）の {親インデックス: (子Jインデックス, 子Kインデックス)} を返す（DXF-viewer版）。
+    """結合親領域（union parent）の {親インデックス: (子インデックス, ...)} を返す（DXF-viewer版）。
 
-    横/縦線分で2分割された兄弟矩形の合体親が検出条件:
-      1. area(P) ≈ area(Q) + area(R)
-      2. P.corners ⊂ Q.corners ∪ R.corners
-      3. regions_overlap(P, Q) かつ regions_overlap(P, R)
-      4. NOT regions_overlap(Q, R)
+    子の数は2以上の任意数に対応する（v1.9.1相当、N子一般化。primary
+    〈DXF-extract-labels/utils/region_detector.py〉v1.9.1 からの移植、
+    2026-07-15。3分割以上の矩形、例 FL1F①②③、を正しく解消するために必要）。
+
+    子候補の絞り込み: 親Pに内包される（regions_overlapかつ面積がPより小さい）
+    候補を面積の大きい順に走査し、既に選んだ候補と重ならないものだけを貪欲に
+    採用する。面積降順で走査するため、入れ子（正しい兄弟候補がたまたま無関係な
+    小さな詳細領域を内部に持つ場合）があっても、外側の正しい兄弟候補が先に
+    選ばれ、内側のノイズ候補は「既選択候補と重なる」として自然に除外される。
+
+    検出条件（全て満たす）:
+      1. area(P) ≈ Σ area(子)
+      2. P の全コーナーが 子群.corners の和集合に含まれる
+      3. 各子について regions_overlap(P, 子)
+      4. 子同士は互いに重ならない（兄弟、貪欲選択により自動的に満たす）
+
+    戻り値: {parent_idx: (child_idx, ...), ...}
     """
     n = len(regions)
     corners = [r['corners'] for r in regions]
     areas = [r['area'] for r in regions]
+    polys = [r['polygon'] for r in regions]
     result = {}
 
     for i in range(n):
-        if i in result:
+        contained = [j for j in range(n) if j != i
+                     and areas[j] < areas[i] - area_tol
+                     and regions_overlap(polys[i], polys[j])]
+        if len(contained) < 2:
             continue
-        for j in range(n):
-            if j == i:
-                continue
-            for k in range(j + 1, n):
-                if k == i:
-                    continue
-                if abs(areas[i] - areas[j] - areas[k]) > area_tol:
-                    continue
-                if not all(
-                    _vertex_in_corner_set(v, corners[j], tol)
-                    or _vertex_in_corner_set(v, corners[k], tol)
-                    for v in corners[i]
-                ):
-                    continue
-                if not regions_overlap(regions[i]['polygon'], regions[j]['polygon']):
-                    continue
-                if not regions_overlap(regions[i]['polygon'], regions[k]['polygon']):
-                    continue
-                if regions_overlap(regions[j]['polygon'], regions[k]['polygon']):
-                    continue
-                result[i] = (j, k)
-                break
-            if i in result:
-                break
+        contained.sort(key=lambda j: areas[j], reverse=True)
+        selected = []
+        for j in contained:
+            if not any(regions_overlap(polys[j], polys[s]) for s in selected):
+                selected.append(j)
+        if len(selected) < 2:
+            continue
+        if abs(areas[i] - sum(areas[j] for j in selected)) > area_tol:
+            continue
+        child_corner_pool = [c for j in selected for c in corners[j]]
+        if not all(_vertex_in_corner_set(v, child_corner_pool, tol) for v in corners[i]):
+            continue
+        result[i] = tuple(selected)
 
     return result
 
@@ -1438,11 +1527,10 @@ def _force_include_union_children(cands_list, frame_area, area_ratio, area_tol=1
     enriched = [dict(cf, corners=_polygon_corners(cf['polygon'])) for cf in cands_list]
     parent_to_children = _detect_union_parents(enriched, tol=corner_tol, area_tol=area_tol)
     child_idx = set()
-    for i, (j, k) in parent_to_children.items():
+    for i, children in parent_to_children.items():
         if not _area_ratio_met(enriched[i]['area'], frame_area, area_ratio):
             continue
-        child_idx.add(j)
-        child_idx.add(k)
+        child_idx.update(children)
     return child_idx
 
 
@@ -1554,10 +1642,10 @@ def _resolve_union_parents(regions, labels=None, cfg=None):
         child_indices = {c for cs in parent_to_children.values() for c in cs}
         # フレーム別に「既使用名称」を管理（異なるフレームは独立して同名を許可）
         parent_claimed_by_frame = defaultdict(set)
-        for parent_idx, (child_j, child_k) in parent_to_children.items():
+        for parent_idx, child_idxs in parent_to_children.items():
             parent = regions[parent_idx]
             parent_frame = parent.get('frame', 0)
-            children = [regions[child_j], regions[child_k]]
+            children = [regions[c] for c in child_idxs]
             # 同一フレーム内の非親・非子領域が使用中の名称を除外対象とする
             same_frame_names = {
                 regions[i]['default_name']
