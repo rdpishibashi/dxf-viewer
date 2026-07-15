@@ -1027,6 +1027,23 @@ matplotlib       # エクスポート機能で使用
 
 ---
 
+*最終更新: 2026-07-16（ユーザー報告: DXF-extract-labelsでは最小領域サイズ3%で
+`CM DRV`領域を抽出できるのに、DXF-viewerでは1%にしても認識できない。原因は
+`core/region_detector.py`の領域名候補フィルタが3箇所で正規化（`normalize_width`）
+未適用のままだったこと（全角/半角対応は`_count_letters`のみ移植され、
+`filter_non_circuit_symbols()`・`_filter_eligible_labels()`・
+`_is_valid_name_candidate()`の判定文字列`up`の正規化が漏れていた——2026-07-03の
+全角/半角対応が部分的にしか移植されていなかった）。全角の機器符号
+（`ＤＯＵＴ４（ＭＯＶＥ）`等）・全角除外語（`ＮＯＴＥ`）が正規化なしのASCII前提
+パターンに一切マッチせず素通りし、`CM DRV`領域の正しい名称候補を押しのけて
+誤った候補が採用されていた。3箇所に`normalize_width()`適用を追加し
+primaryと同一の判定に統一。あわせて`DEFAULT_REGION_CONFIG['connection_point_margin']`
+を0.1→0.05に変更しprimaryと統一（気づかれていなかった別の設定値drift）。
+`EE6888-650-01C.dxf`で`CM DRV`領域名がprimaryと完全一致することを確認、
+全回帰テストPASS。再発防止として、`DXF-extract-labels/tests/regression/`に
+両プロジェクトの領域名検出結果を実データで突き合わせるクロスプロジェクト
+一貫性テストを新設（詳細は`DXF-extract-labels/TECHNICAL.md`参照）。）*
+
 *最終更新: 2026-07-15（`core/region_detector.py` に DXF-extract-labels primary
 v1.9.0 の変更を移植。**(1)** 面積比較を整数%（四捨五入）・`>=` で行う
 `_area_ratio_met()` を導入し、`DEFAULT_REGION_CONFIG['area_ratio']` を

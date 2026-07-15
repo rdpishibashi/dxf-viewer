@@ -91,11 +91,18 @@ def extract_drawing_numbers(text):
 
 
 def filter_non_circuit_symbols(labels):
-    """機器符号フォーマットに一致するラベルを (matched, excluded_count) で返す。"""
+    """機器符号フォーマットに一致するラベルを (matched, excluded_count) で返す。
+
+    判定は normalize_width()（NFKC）後の文字列で行う。全角の機器符号
+    （例 `ＤＯＵＴ４（ＭＯＶＥ）`）はASCII前提のパターンに素通りしてしまうため
+    （primary: DXF-extract-labels の同じ修正から移植、2026-07-16）。
+    返すラベルは原文のまま（呼び出し元は原文と突き合わせるため）。
+    """
     matched = []
     excluded = 0
     for label in labels:
-        if any(re.match(p, label) for p in _CIRCUIT_SYMBOL_PATTERNS):
+        target = normalize_width(label)
+        if any(re.match(p, target) for p in _CIRCUIT_SYMBOL_PATTERNS):
             matched.append(label)
         else:
             excluded += 1
@@ -140,7 +147,7 @@ DEFAULT_REGION_CONFIG = {
     'circuit_symbol_keep_terms': ('RACK',),  # この語を含むラベルは機器符号扱いしない（例 RACK1）
     'exclude_connection_point_regions': True,  # 境界に接続点(円)を持つ領域(配線ループ)を除外
     'connection_point_threshold': 1,    # 境界上の接続点がこの数(個数)以上なら除外
-    'connection_point_margin': 0.1,    # 接続点が境界線上とみなす座標距離マージン
+    'connection_point_margin': 0.05,   # 接続点が境界線上とみなす座標距離マージン（primaryと統一、2026-07-16）
 }
 
 # 内部定数（マジックナンバーの明示）
@@ -1075,11 +1082,14 @@ def _filter_eligible_labels(labels, min_letters, exclude_lowercase, exclude_term
             continue
         if exclude_lowercase and any(_is_lowercase_letter(ch) for ch in t):
             continue
-        up = t.upper()
+        # 除外語・keep-term の照合は半角相当で行う（機器符号フィルタ側も
+        # normalize_width で判定するため、全角 ＮＯＴＥ 等が素通りする不整合を
+        # 防ぐ。primary: DXF-extract-labels の同じ修正から移植、2026-07-16）。
+        up = normalize_width(t).upper()
         # 矩形領域名称の1文字目に "(" が来ることはない（例: 全角 "（ＣＬＯＳＥ）" は
         # 状態表示ラベルであり領域名ではない）。途中に "(" を含む名称
         # （例 "TMP (TMP-1003LM)"）は対象外（v1.9.0、DXF-extract-labels primary から移植）。
-        if normalize_width(t).strip().startswith('('):
+        if up.strip().startswith('('):
             continue
         if any(term.upper() in up for term in terms):
             continue
@@ -1544,9 +1554,11 @@ def _is_valid_name_candidate(t, min_letters, exclude_lowercase, exclude_terms,
         return False
     if exclude_lowercase and any(_is_lowercase_letter(ch) for ch in t):
         return False
-    up = t.upper()
+    # 除外語・keep-term の照合は半角相当で行う（primary: DXF-extract-labels の
+    # 同じ修正から移植、2026-07-16）。
+    up = normalize_width(t).upper()
     # 矩形領域名称の1文字目に "(" が来ることはない（v1.9.0、primary から移植）。
-    if normalize_width(t).strip().startswith('('):
+    if up.strip().startswith('('):
         return False
     if any(term.upper() in up for term in (exclude_terms or ())):
         return False
@@ -1801,7 +1813,9 @@ def analyze_dxf_regions(dxf_file, config=None):
         frames = detect_drawing_frames(frame_lines, cfg['snap'])
         result['frames'] = frames
         if not frames:
-            result['error'] = ('図面枠（太さ %d の線で囲まれた枠）が見つかりませんでした。'
+            # 「何が実施できなかったか」を明確に伝える文言（primary v1.8.3 から移植、2026-07-16）。
+            result['error'] = ('図面枠（太さ %d の線で囲まれた枠）が見つからなかったため、'
+                               '領域探索を実施することができませんでした。'
                                % cfg['frame_lineweight'])
             return result
         frame_area = (frames[0][1] - frames[0][0]) * (frames[0][3] - frames[0][2])
