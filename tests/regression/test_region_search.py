@@ -44,7 +44,7 @@ def _find_sample(name):
     return direct
 
 
-from core.region_detector import analyze_dxf_regions, extract_text_from_entity
+from core.region_detector import analyze_dxf_regions, assign_region_labels, extract_text_from_entity
 from core.region_search_manager import RegionSearchManager
 
 
@@ -339,6 +339,41 @@ def check_search_boundary_default_area_ratio():
     return ok
 
 
+def check_label_on_region_boundary_is_assigned_not_dropped():
+    """`EE6491-039-21A.dxf`'s `CNPG01` sits essentially exactly on a region
+    boundary edge (offset ~2e-7 from the edge, i.e. floating-point noise).
+    A plain ray-casting `_point_in_polygon` tips inside/outside depending on
+    which way that noise falls, so the label was silently dropped from its
+    region on this file while an identically-formatted sibling file
+    (`EE6888-637-01A.dxf`, where the same label sits 0.375 away from the
+    edge) was unaffected (reported 2026-07-23, found via
+    DXF-extract-labels; ported here since `_point_in_polygon` here is the
+    same vulnerable implementation). Fixed via `boundary_eps` tolerance in
+    `_point_in_polygon`.
+    """
+    path = _find_sample('EE6491-039-21A.dxf')
+    name = os.path.basename(path)
+    if not os.path.exists(path):
+        print(f"{name}: sample not found — skipping boundary label assignment check")
+        return True
+
+    analysis = analyze_dxf_regions(path)
+    if analysis.get('error'):
+        print(f"{name}: FAIL analysis error: {analysis['error']}")
+        return False
+
+    named = [{'polygon': r['polygon'], 'name': r['default_name']}
+             for r in analysis['regions'] if r['default_name']]
+    assigned = assign_region_labels(analysis['labels'], named)
+    cnpg01_regions = next((names for (t, _x, _y, names) in assigned if t == 'CNPG01'), None)
+    ok = cnpg01_regions is not None and 'SYSTEM I/F BOX' in cnpg01_regions
+    if not ok:
+        print(f"{name}: FAIL CNPG01 not assigned to SYSTEM I/F BOX "
+              f"(got {cnpg01_regions!r})")
+    print(f"{name}: {'OK' if ok else 'FAIL'} (boundary label assignment)")
+    return ok
+
+
 def main(argv):
     if argv[1:]:
         paths = argv[1:]
@@ -355,6 +390,7 @@ def main(argv):
         return 0
     results = [check_file(p) for p in paths]
     results.append(check_search_boundary_default_area_ratio())
+    results.append(check_label_on_region_boundary_is_assigned_not_dropped())
     ok = all(r is not False for r in results)
     print('PASS' if ok else 'FAIL')
     return 0 if ok else 1
