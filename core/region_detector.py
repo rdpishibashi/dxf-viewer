@@ -1829,6 +1829,23 @@ def analyze_dxf_regions(dxf_file, config=None):
             result['error'] = ('図面枠（太さ %d の線で囲まれた枠）が見つからなかったため、'
                                '領域探索を実施することができませんでした。'
                                % cfg['frame_lineweight'])
+            # 領域探索自体はできないが、ラベル抽出は図面枠に依存しないため、
+            # 枠制約なし・重複除去のみでresult['labels']を埋める
+            # （primaryのDXF-extract-labelsから移植、2026-07-23。図面枠が
+            # 見つからない図面のラベルが analysis['labels'] 依存の呼び出し元で
+            # 丸ごと消える不具合の修正）。
+            seen = set()
+            fallback_labels = []
+            for it in label_entities:
+                _, clean_text, (x, y) = extract_text_from_entity(it)
+                if not clean_text:
+                    continue
+                key = (clean_text, round(x, 1), round(y, 1))
+                if key in seen:
+                    continue
+                seen.add(key)
+                fallback_labels.append((clean_text, x, y))
+            result['labels'] = fallback_labels
             return result
         frame_area = (frames[0][1] - frames[0][0]) * (frames[0][3] - frames[0][2])
         result['frame_area'] = frame_area
